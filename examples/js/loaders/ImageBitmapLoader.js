@@ -62,15 +62,13 @@ var canUseImageBitmapOptions = detectCreateImageBitmap( [
  * Self-contained worker for fetching and decoding an image, returning an
  * ImageBitmap to the main thread.
  */
-var Parser = (function () {
+var ImageBitmapWorker = (function () {
 
-	function Parser() {
+	function ImageBitmapWorker() {
 		this.callbackBuilder = null;
-		this.callbackProgress = null;
 	}
 
-	/* global self */
-	Parser.prototype.parse = function ( input, options ) {
+	ImageBitmapWorker.prototype.parse = function ( input, options ) {
 		var imageBitmapCreator = ( options === undefined )	? this.workerScope.createImageBitmap( input ) : this.workerScope.createImageBitmap( input, options );
 
 		var scope = this;
@@ -86,8 +84,6 @@ var Parser = (function () {
 		} ).catch( function ( error ) {
 
 			var errorMessage = 'THREE.ImageBitmapWorker: ' + error;
-			console.error( errorMessage );
-
 			scope.callbackBuilder(
 				{
 					cmd: 'error',
@@ -98,7 +94,7 @@ var Parser = (function () {
 		} );
 	};
 
-	return Parser;
+	return ImageBitmapWorker;
 })();
 
 var createAbsolutePath = function ( href ) {
@@ -178,7 +174,7 @@ THREE.ImageBitmapLoader.prototype = {
 			workerCode += '/**\n';
 			workerCode += '  * This code was constructed by ImageBitmapLoader buildWorkerCode.\n';
 			workerCode += '  */\n\n';
-			workerCode += funcBuildSingelton( 'Parser', 'Parser', Parser );
+			workerCode += funcBuildSingelton( 'Parser', 'Parser', ImageBitmapWorker );
 
 			return workerCode;
 		};
@@ -210,16 +206,15 @@ THREE.ImageBitmapLoader.prototype = {
 
 			return response.blob();
 
-		} ).then( function ( arrayBuffer ) {
+		} ).then( function ( blob ) {
 
 			workerSupport.run(
 				{
 					data: {
-						input: arrayBuffer,
+						input: blob,
 						options: scope.options
 					}
-				},
-				[ arrayBuffer.buffer ]
+				}
 			);
 
 		} )

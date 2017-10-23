@@ -1080,14 +1080,18 @@ THREE.LoaderSupport.WorkerSupport = (function () {
 
 							if ( scope.terminateRequested ) {
 
-								scope.logger.logInfo( 'WorkerSupport: Run is complete. Terminating application on request!' );
+								scope.logger.logInfo( 'WorkerSupport [' + workerRunner + ']: Run is complete. Terminating application on request!' );
 								scope.terminateWorker();
 
 							}
 							break;
 
+						case 'error':
+							scope.logger.logError( 'WorkerSupport [' + workerRunner + ']: Reported error: ' + payload.msg );
+							break;
+
 						default:
-							scope.logger.logError( 'WorkerSupport: Received unknown command: ' + payload.cmd );
+							scope.logger.logError( 'WorkerSupport [' + workerRunner + ']: Received unknown command: ' + payload.cmd );
 							break;
 
 					}
@@ -1191,6 +1195,7 @@ THREE.LoaderSupport.WorkerSupport = (function () {
 	var buildSingelton = function ( fullName, internalName, object ) {
 		var objectString = fullName + ' = (function () {\n\n';
 		objectString += '\t' + object.prototype.constructor.toString() + '\n\n';
+		objectString = objectString.replace( object.name, internalName );
 
 		var funcString;
 		var objectPart;
