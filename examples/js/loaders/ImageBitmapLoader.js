@@ -62,37 +62,44 @@ var canUseImageBitmapOptions = detectCreateImageBitmap( [
  * Self-contained worker for fetching and decoding an image, returning an
  * ImageBitmap to the main thread.
  */
-var ImageBitmapWorker = function () {
+var Parser = (function () {
+
+	function Parser() {
+		this.callbackBuilder = null;
+		this.callbackProgress = null;
+	}
 
 	/* global self */
+	Parser.prototype.parse = function ( input, options ) {
+		var imageBitmapCreator = ( options === undefined )	? this.workerScope.createImageBitmap( input ) : this.workerScope.createImageBitmap( input, options );
 
-	self.onmessage = function ( message ) {
+		var scope = this;
+		imageBitmapCreator.then( function ( imageBitmap ) {
 
-		fetch( message.data.url ).then( function ( response ) {
-
-			return response.blob();
-
-		} ).then( function ( blob ) {
-
-			return message.data.options === undefined
-				? self.createImageBitmap( blob )
-				: self.createImageBitmap( blob, message.data.options );
-
-		} ).then( function (imageBitmap) {
-
-			self.postMessage( imageBitmap );
+			scope.callbackBuilder(
+				{
+					cmd: 'imageData',
+					data: imageBitmap
+				}
+			);
 
 		} ).catch( function ( error ) {
 
-			console.error('THREE.ImageBitmapWorker: ' + error);
+			var errorMessage = 'THREE.ImageBitmapWorker: ' + error;
+			console.error( errorMessage );
 
-			self.postMessage( error );
+			scope.callbackBuilder(
+				{
+					cmd: 'error',
+					msg: errorMessage
+				}
+			);
 
 		} );
-
 	};
 
-};
+	return Parser;
+})();
 
 var createAbsolutePath = function ( href ) {
 
@@ -135,6 +142,10 @@ THREE.ImageBitmapLoader.prototype = {
 
 	},
 
+	run: function run( prepData ) {
+
+	},
+
 	load: function load( url, onLoad, onProgress, onError ) {
 
 		if ( url === undefined ) url = '';
@@ -161,24 +172,19 @@ THREE.ImageBitmapLoader.prototype = {
 
 		}
 
-		// Build a worker from an anonymous function body
-		var workerBlobURL = URL.createObjectURL( new Blob(
-			[ '(', ImageBitmapWorker.toString(), ')()' ],
-			{ type: 'application/javascript' }
-		) );
+		var workerSupport = new THREE.LoaderSupport.WorkerSupport();
+		var buildWorkerCode = function ( funcBuildObject, funcBuildSingelton ) {
+			var workerCode = '';
+			workerCode += '/**\n';
+			workerCode += '  * This code was constructed by ImageBitmapLoader buildWorkerCode.\n';
+			workerCode += '  */\n\n';
+			workerCode += funcBuildSingelton( 'Parser', 'Parser', Parser );
 
-		var worker = new Worker( workerBlobURL );
-
-		worker.postMessage( {
-			url: createAbsolutePath( url ),
-			options: scope.options
-		} );
-
-		worker.onmessage = function ( message ) {
-
-			var result = message.data;
-
-			if ( result instanceof ImageBitmap ) {
+			return workerCode;
+		};
+		var scopeBuilderFunc = function ( payload ) {
+			var result = payload.data;
+			if ( payload.data instanceof ImageBitmap ) {
 
 				THREE.Cache.add( url, result );
 
@@ -194,10 +200,29 @@ THREE.ImageBitmapLoader.prototype = {
 				scope.manager.itemError( url );
 
 			}
-
+		};
+		var scopeFuncComplete = function ( message ) {
 		};
 
-		URL.revokeObjectURL( workerBlobURL );
+		workerSupport.validate( buildWorkerCode, false );
+		workerSupport.setCallbacks( scopeBuilderFunc, scopeFuncComplete );
+		fetch( url ).then( function ( response ) {
+
+			return response.blob();
+
+		} ).then( function ( arrayBuffer ) {
+
+			workerSupport.run(
+				{
+					data: {
+						input: arrayBuffer,
+						options: scope.options
+					}
+				},
+				[ arrayBuffer.buffer ]
+			);
+
+		} )
 
 	}
 
