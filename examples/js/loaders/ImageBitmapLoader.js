@@ -118,6 +118,9 @@ THREE.ImageBitmapLoader = function ( manager ) {
 
 	this.manager = manager !== undefined ? manager : THREE.DefaultLoadingManager;
 	this.options = undefined;
+	this.workerSupport = null;
+	this.instanceNo = 0;
+	this.callbacks = new THREE.LoaderSupport.Callbacks();
 
 };
 
@@ -135,10 +138,6 @@ THREE.ImageBitmapLoader.prototype = {
 
 		this.options = options;
 		return this;
-
-	},
-
-	run: function run( prepData ) {
 
 	},
 
@@ -168,7 +167,30 @@ THREE.ImageBitmapLoader.prototype = {
 
 		}
 
-		var workerSupport = new THREE.LoaderSupport.WorkerSupport();
+		this.workerSupport = new THREE.LoaderSupport.WorkerSupport();
+		this.workerSupport.setTerminateRequested( true );
+		this._execWorker( url, onLoad, onError );
+	},
+
+	run: function run( prepData, workerSupportExternal ) {
+		var Validator = THREE.LoaderSupport.Validator;
+
+		if ( Validator.isValid( workerSupportExternal ) ) {
+
+			this.workerSupport = workerSupportExternal;
+
+		} else {
+
+			this.workerSupport = Validator.verifyInput( this.workerSupport, new THREE.LoaderSupport.WorkerSupport() );
+
+		}
+
+		this._execWorker( prepData.resources[ 0 ].url, prepData.getCallbacks().onLoad, prepData.getCallbacks().onLoad  );
+	},
+
+	_execWorker: function ( url, onLoad, onError ) {
+		var scope = this;
+
 		var buildWorkerCode = function ( funcBuildObject, funcBuildSingelton ) {
 			var workerCode = '';
 			workerCode += '/**\n';
@@ -184,8 +206,16 @@ THREE.ImageBitmapLoader.prototype = {
 
 				THREE.Cache.add( url, result );
 
-				if ( onLoad ) onLoad( result );
+				if ( onLoad ) {
 
+					onLoad( {
+						detail: {
+							imageBitmap: result,
+							instanceNo: scope.instanceNo
+						}
+					} );
+
+				}
 				scope.manager.itemEnd( url );
 
 			} else {
@@ -200,25 +230,29 @@ THREE.ImageBitmapLoader.prototype = {
 		var scopeFuncComplete = function ( message ) {
 		};
 
-		workerSupport.validate( buildWorkerCode, false );
-		workerSupport.setCallbacks( scopeBuilderFunc, scopeFuncComplete );
+		this.workerSupport.validate( buildWorkerCode, false );
+		this.workerSupport.setCallbacks( scopeBuilderFunc, scopeFuncComplete );
 		fetch( url ).then( function ( response ) {
 
 			return response.blob();
 
 		} ).then( function ( blob ) {
 
-			workerSupport.run(
+			scope.workerSupport.run(
 				{
 					data: {
 						input: blob,
 						options: scope.options
-					}
+					},
+					logger: {
+						debug: false,
+						enabled: false
+					},
 				}
 			);
 
 		} )
-
 	}
+
 
 };

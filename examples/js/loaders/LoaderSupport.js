@@ -163,6 +163,7 @@ THREE.LoaderSupport.Callbacks = (function () {
 		this.onProgress = null;
 		this.onMeshAlter = null;
 		this.onLoad = null;
+		this.onLoadMaterials = null;
 	}
 
 	/**
@@ -194,6 +195,16 @@ THREE.LoaderSupport.Callbacks = (function () {
 	 */
 	Callbacks.prototype.setCallbackOnLoad = function ( callbackOnLoad ) {
 		this.onLoad = Validator.verifyInput( callbackOnLoad, this.onLoad );
+	};
+
+	/**
+	 * Register callback function that is called when materials have been loaded.
+	 * @memberOf THREE.LoaderSupport.Callbacks
+	 *
+	 * @param {callback} callbackOnLoadMaterials Callback function for described functionality
+	 */
+	Callbacks.prototype.setCallbackOnLoadMaterials = function ( callbackOnLoadMaterials ) {
+		this.onLoadMaterials = Validator.verifyInput( callbackOnLoadMaterials, this.onLoadMaterials );
 	};
 
 	return Callbacks;
@@ -424,7 +435,7 @@ THREE.LoaderSupport.PrepData = (function () {
  */
 THREE.LoaderSupport.Builder = (function () {
 
-	var LOADER_BUILDER_VERSION = '1.1.0';
+	var LOADER_BUILDER_VERSION = '1.1.1';
 
 	var Validator = THREE.LoaderSupport.Validator;
 	var ConsoleLogger = THREE.LoaderSupport.ConsoleLogger;
@@ -448,16 +459,17 @@ THREE.LoaderSupport.Builder = (function () {
 			materials: {
 				materialCloneInstructions: null,
 				serializedMaterials: null,
-				runtimeMaterials: materials
+				runtimeMaterials: Validator.isValid( this.callbacks.onLoadMaterials ) ? this.callbacks.onLoadMaterials( materials ) : materials
 			}
 		};
 		this.updateMaterials( payload );
 	};
 
-	Builder.prototype._setCallbacks = function ( callbackOnProgress, callbackOnMeshAlter, callbackOnLoad ) {
-		this.callbacks.setCallbackOnProgress( callbackOnProgress );
-		this.callbacks.setCallbackOnMeshAlter( callbackOnMeshAlter );
-		this.callbacks.setCallbackOnLoad( callbackOnLoad );
+	Builder.prototype._setCallbacks = function ( callbacks ) {
+		if ( Validator.isValid( callbacks.onProgress ) ) this.callbacks.setCallbackOnProgress( callbacks.onProgress );
+		if ( Validator.isValid( callbacks.onMeshAlter ) ) this.callbacks.setCallbackOnMeshAlter( callbacks.onMeshAlter );
+		if ( Validator.isValid( callbacks.onLoad ) ) this.callbacks.setCallbackOnLoad( callbacks.onLoad );
+		if ( Validator.isValid( callbacks.onLoadMaterials ) ) this.callbacks.setCallbackOnLoadMaterials( callbacks.onLoadMaterials );
 	};
 
 	/**
@@ -771,16 +783,17 @@ THREE.LoaderSupport.LoaderBase = (function () {
 			this.setUseIndices( prepData.useIndices );
 			this.setDisregardNormals( prepData.disregardNormals );
 
-			this._setCallbacks( prepData.getCallbacks().onProgress, prepData.getCallbacks().onMeshAlter, prepData.getCallbacks().onLoad );
+			this._setCallbacks( prepData.getCallbacks() );
 		}
 	};
 
-	LoaderBase.prototype._setCallbacks = function ( callbackOnProgress, callbackOnMeshAlter, callbackOnLoad ) {
-		this.callbacks.setCallbackOnProgress( callbackOnProgress );
-		this.callbacks.setCallbackOnMeshAlter( callbackOnMeshAlter );
-		this.callbacks.setCallbackOnLoad( callbackOnLoad );
+	LoaderBase.prototype._setCallbacks = function ( callbacks ) {
+		if ( Validator.isValid( callbacks.onProgress ) ) this.callbacks.setCallbackOnProgress( callbacks.onProgress );
+		if ( Validator.isValid( callbacks.onMeshAlter ) ) this.callbacks.setCallbackOnMeshAlter( callbacks.onMeshAlter );
+		if ( Validator.isValid( callbacks.onLoad ) ) this.callbacks.setCallbackOnLoad( callbacks.onLoad );
+		if ( Validator.isValid( callbacks.onLoadMaterials ) ) this.callbacks.setCallbackOnLoadMaterials( callbacks.onLoadMaterials );
 
-		this.builder._setCallbacks( callbackOnProgress, callbackOnMeshAlter, callbackOnLoad );
+		this.builder._setCallbacks( this.callbacks );
 	};
 
 	/**
@@ -980,7 +993,7 @@ THREE.LoaderSupport.WorkerRunnerRefImpl = (function () {
  */
 THREE.LoaderSupport.WorkerSupport = (function () {
 
-	var WORKER_SUPPORT_VERSION = '1.1.0';
+	var WORKER_SUPPORT_VERSION = '1.1.1';
 
 	var Validator = THREE.LoaderSupport.Validator;
 
@@ -1080,18 +1093,18 @@ THREE.LoaderSupport.WorkerSupport = (function () {
 
 							if ( scope.terminateRequested ) {
 
-								scope.logger.logInfo( 'WorkerSupport [' + workerRunner + ']: Run is complete. Terminating application on request!' );
+								scope.logger.logInfo( 'WorkerSupport [' + workerRunner.name + ']: Run is complete. Terminating application on request!' );
 								scope.terminateWorker();
 
 							}
 							break;
 
 						case 'error':
-							scope.logger.logError( 'WorkerSupport [' + workerRunner + ']: Reported error: ' + payload.msg );
+							scope.logger.logError( 'WorkerSupport [' + workerRunner.name + ']: Reported error: ' + payload.msg );
 							break;
 
 						default:
-							scope.logger.logError( 'WorkerSupport [' + workerRunner + ']: Received unknown command: ' + payload.cmd );
+							scope.logger.logError( 'WorkerSupport [' + workerRunner.name + ']: Received unknown command: ' + payload.cmd );
 							break;
 
 					}
@@ -1443,7 +1456,7 @@ THREE.LoaderSupport.WorkerDirector = (function () {
 	WorkerDirector.prototype._buildLoader = function ( instanceNo ) {
 		var classDef = this.workerDescription.classDef;
 		var loader = Object.create( classDef.prototype );
-		this.workerDescription.classDef.call( loader, null, this.logger );
+		this.workerDescription.classDef.call( loader, THREE.DefaultLoadingManager, this.logger );
 
 		// verify that all required functions are implemented
 		if ( ! loader.hasOwnProperty( 'instanceNo' ) ) throw classDef.name + ' has no property "instanceNo".';
@@ -1453,12 +1466,17 @@ THREE.LoaderSupport.WorkerDirector = (function () {
 
 			throw classDef.name + ' has no property "workerSupport".';
 
-		} else if ( ! classDef.workerSupport instanceof THREE.LoaderSupport.WorkerSupport ) {
-
-			throw classDef.name + '.workerSupport is not of type "THREE.LoaderSupport.WorkerSupport".';
-
 		}
 		if ( typeof loader.run !== 'function'  ) throw classDef.name + ' has no function "run".';
+		if ( ! loader.hasOwnProperty( 'callbacks' ) ) {
+
+			throw classDef.name + ' has no property "callbacks".';
+
+		} else if ( ! ( loader.callbacks instanceof THREE.LoaderSupport.Callbacks ) ) {
+
+			throw classDef.name + '.callbacks is not of type "THREE.LoaderSupport.Callbacks".';
+
+		}
 
 		return loader;
 	};
@@ -1473,7 +1491,15 @@ THREE.LoaderSupport.WorkerDirector = (function () {
 		for ( var i = 0, length = this.workerDescription.workerSupports.length; i < length; i++ ) {
 
 			var supportTuple = this.workerDescription.workerSupports[ i ];
-			supportTuple.workerSupport.setTerminateRequested( true );
+			if ( supportTuple.workerSupport.running ) {
+
+				supportTuple.workerSupport.setTerminateRequested( true );
+
+			} else {
+
+				supportTuple.workerSupport.terminateWorker();
+
+			}
 			this.logger.logInfo( 'Requested termination of worker.' );
 
 			var loaderCallbacks = supportTuple.loader.callbacks;

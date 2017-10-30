@@ -85,9 +85,9 @@
 
 				new THREE.ImageBitmapLoader()
 					.setOptions( { imageOrientation: 'none' } )
-					.load( 'textures/planets/earth_atmos_2048.jpg?' + performance.now(), function( imageBitmap ) {
+					.load( 'textures/planets/earth_atmos_2048.jpg?' + performance.now(), function( event ) {
 
-						var tex = new THREE.CanvasTexture( imageBitmap );
+						var tex = new THREE.CanvasTexture( event.detail.imageBitmap );
 
 						/* ImageBitmap should be disposed when done with it
 						   Can't be done until it's actually uploaded to WebGLTexture */
@@ -102,6 +102,33 @@
 						console.log( e );
 					} );
 
+			}
+
+			function addManyImageBitmaps () {
+				var maxQueueSize = 128;
+				var maxWebWorkers = 4;
+				var loggerDirector = new THREE.LoaderSupport.ConsoleLogger( false );
+				var workerDirector = new THREE.LoaderSupport.WorkerDirector( THREE.ImageBitmapLoader, loggerDirector );
+				workerDirector.setCrossOrigin( 'anonymous' );
+
+				var callbackOnLoad = function ( event ) {
+					var instanceNo = event.detail.instanceNo;
+					console.log( 'Worker #' + instanceNo + ' completed loading!' );
+					var tex = new THREE.CanvasTexture( event.detail.imageBitmap );
+					addCube( tex );
+				};
+
+				var callbacks = new THREE.LoaderSupport.Callbacks();
+				callbacks.setCallbackOnLoad( callbackOnLoad );
+				workerDirector.prepareWorkers( callbacks, maxQueueSize, maxWebWorkers );
+
+				var prepData;
+				for ( var i = 0; i < maxQueueSize; i++ ) {
+					prepData = new THREE.LoaderSupport.PrepData( 'Bitmap_' + i );
+					prepData.addResource( new THREE.LoaderSupport.ResourceDescriptor( 'textures/planets/earth_atmos_2048.jpg', 'JPG' ) );
+					workerDirector.enqueueForRun( prepData );
+				}
+				workerDirector.processQueue();
 			}
 
 			function addImage () {
@@ -121,9 +148,11 @@
 
 				var material = new THREE.MeshBasicMaterial( { map: texture } );
 
+				var factor = 6;
+				var half = factor / 2;
 				var cube = new THREE.Mesh( geometry, material );
-				cube.position.set( Math.random() * 2 - 1, Math.random() * 2 - 1, Math.random() * 2 - 1 );
-				cube.rotation.set( Math.random() * 2 * Math.PI, Math.random() * 2 * Math.PI, Math.random() * 2 * Math.PI );
+				cube.position.set( Math.random() * factor - half, Math.random() * factor - half, Math.random() * factor - half );
+				cube.rotation.set( Math.random() * factor * Math.PI, Math.random() * factor * Math.PI, Math.random() * factor * Math.PI );
 				cubes.add( cube );
 
 			}
@@ -155,6 +184,7 @@
 
 				addImageBitmap();
 				addImage();
+				addManyImageBitmaps();
 
 				var ibBtn = document.getElementById( 'add_ib_btn' );
 				ibBtn.addEventListener( 'click', function( e ) {
