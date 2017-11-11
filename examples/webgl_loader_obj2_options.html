@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 	<head>
-		<title>three.js webgl - WWOBJLoader2</title>
+		<title>three.js webgl - OBJLoader2 usage options</title>
 		<meta charset="utf-8">
 		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
 
@@ -120,13 +120,13 @@
 						antialias: true,
 						autoClear: true
 					} );
-					this.renderer.setClearColor( 0x050505 );
+					this.renderer.setClearColor( 0xAAAAAA );
 
 					this.scene = new THREE.Scene();
 
 					this.camera = new THREE.PerspectiveCamera( this.cameraDefaults.fov, this.aspectRatio, this.cameraDefaults.near, this.cameraDefaults.far );
 					this.resetCamera();
-					this.controls = new THREE.TrackballControls( this.camera, this.renderer.domElement );
+					this.controls = new THREE.TrackballControls( this.camera, this.canvas );
 
 					var ambientLight = new THREE.AmbientLight( 0x404040 );
 					var directionalLight1 = new THREE.DirectionalLight( 0xC0C090 );
@@ -259,7 +259,7 @@
 						objLoader.setMaterials( materials );
 						objLoader.load( 'obj/walt/WaltHead.obj', callbackOnLoad, null, null, null, true );
 					};
-					objLoader.loadMtl( 'obj/walt//WaltHead.mtl', 'WaltHead.mtl', null, onLoadMtl );
+					objLoader.loadMtl( 'obj/walt/WaltHead.mtl', 'WaltHead.mtl', null, onLoadMtl );
 				};
 
 				WWOBJLoader2Example.prototype.useRunSync = function () {
@@ -295,14 +295,17 @@
 					local.name = 'Pivot_vive-controller';
 					this.pivot.add( local );
 					prepData.setStreamMeshesTo( local );
-					prepData.addResource( new THREE.LoaderSupport.ResourceDescriptor( 'models/obj/vive-controller/vr_controller_vive_1_5.obj', 'OBJ' ) );
+					prepData.addResource( new THREE.LoaderSupport.ResourceDescriptor( 'obj/12597/citadine2.obj', 'OBJ' ) );
+					prepData.addResource( new THREE.LoaderSupport.ResourceDescriptor( 'obj/12597/citadine2.mtl', 'MTL' ) );
+
 					prepData.setUseAsync( true );
 					var callbacks = prepData.getCallbacks();
 					var callbackMeshAlter = function ( event ) {
 						var override = new THREE.LoaderSupport.LoadedMeshUserOverride( false, true );
 
+			//			if ( event.detail.meshName !== "VitreAV_Plane.043" ) override.disregardMesh = true;
 						var mesh = new THREE.Mesh( event.detail.bufferGeometry, event.detail.material );
-						var scale = 200.0;
+						var scale = 100.0;
 						mesh.scale.set( scale, scale, scale );
 						mesh.name = event.detail.meshName;
 						var helper = new THREE.VertexNormalsHelper( mesh, 2, 0x00ff00, 1 );
@@ -399,9 +402,9 @@
 				};
 
 				WWOBJLoader2Example.prototype.traverseScene = function ( object3d ) {
-					if ( object3d.material instanceof THREE.MultiMaterial ) {
+					if ( object3d.material instanceof Array ) {
 
-						var materials = object3d.material.materials;
+						var materials = object3d.material;
 						for ( var name in materials ) {
 
 							if ( materials.hasOwnProperty( name ) )	this.traversalFunction( materials[ name ] );
@@ -418,6 +421,7 @@
 				return WWOBJLoader2Example;
 
 			})();
+
 
 			var app = new WWOBJLoader2Example( document.getElementById( 'example' ) );
 
@@ -466,7 +470,7 @@
 			// kick render loop
 			render();
 
-
+/*
 			// Load a file with OBJLoader.parse synchronously
 			app.useParseSync();
 
@@ -481,7 +485,7 @@
 
 			// Load a file with OBJLoader.run synchronously
 			app.useRunSync();
-
+*/
 			// Load a file with OBJLoader.run asynchronously and add normals during onMeshAlter
 			app.useRunAsyncMeshAlter();
 
