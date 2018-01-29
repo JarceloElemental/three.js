@@ -5,11 +5,10 @@
 import { Cache } from './Cache.js';
 import { DefaultLoadingManager } from './LoadingManager.js';
 
-var loading = {};
-
 function FileLoader( manager ) {
 
 	this.manager = ( manager !== undefined ) ? manager : DefaultLoadingManager;
+	this.loading = {};
 
 }
 
@@ -45,9 +44,9 @@ Object.assign( FileLoader.prototype, {
 
 		// Check if request is duplicate
 
-		if ( loading[ url ] !== undefined ) {
+		if ( this.loading[ url ] !== undefined ) {
 
-			loading[ url ].push( {
+			this.loading[ url ].push( {
 
 				onLoad: onLoad,
 				onProgress: onProgress,
@@ -152,9 +151,9 @@ Object.assign( FileLoader.prototype, {
 
 			// Initialise array for duplicate requests
 
-			loading[ url ] = [];
+			this.loading[ url ] = [];
 
-			loading[ url ].push( {
+			this.loading[ url ].push( {
 
 				onLoad: onLoad,
 				onProgress: onProgress,
@@ -172,9 +171,9 @@ Object.assign( FileLoader.prototype, {
 
 				Cache.add( url, response );
 
-				var callbacks = loading[ url ];
+				var callbacks = scope.loading[ url ];
 
-				delete loading[ url ];
+				delete scope.loading[ url ];
 
 				if ( this.status === 200 ) {
 
@@ -221,7 +220,7 @@ Object.assign( FileLoader.prototype, {
 
 			request.addEventListener( 'progress', function ( event ) {
 
-				var callbacks = loading[ url ];
+				var callbacks = scope.loading[ url ];
 
 				for ( var i = 0, il = callbacks.length; i < il; i ++ ) {
 
@@ -234,9 +233,9 @@ Object.assign( FileLoader.prototype, {
 
 			request.addEventListener( 'error', function ( event ) {
 
-				var callbacks = loading[ url ];
+				var callbacks = scope.loading[ url ];
 
-				delete loading[ url ];
+				delete scope.loading[ url ];
 
 				for ( var i = 0, il = callbacks.length; i < il; i ++ ) {
 
