@@ -1,6 +1,7 @@
 /**
  * @author Filipe Caixeta / http://filipecaixeta.com.br
  * @author Mugen87 / https://github.com/Mugen87
+ * @author Kai Salmen / https://kaisalmen.de / https://github.com/kaisalmen
  *
  * Description: A THREE loader for PCD ascii and binary files.
  *
@@ -8,161 +9,317 @@
  *
  */
 
+if ( THREE.LoaderSupport === undefined ) console.error( '"THREE.LoaderSupport" is not available. "THREE.PCDLoader" requires it. Please include "LoaderSupport.js" in your HTML.' );
+
+/**
+ * Use this class to load PCD data from files or to parse PCD data from an arraybuffer
+ * @class
+ *
+ * @param {THREE.DefaultLoadingManager} [manager] The loadingManager for the loader to use. Default is {@link THREE.DefaultLoadingManager}
+ */
 THREE.PCDLoader = function ( manager ) {
+	THREE.LoaderSupport.LoaderBase.call( this, manager );
 
-	this.manager = ( manager !== undefined ) ? manager : THREE.DefaultLoadingManager;
+	var PCDLOADER_VERSION = '2.0.0';
+	console.info( 'Using THREE.PCDLOADER_VERSION version: ' + PCDLOADER_VERSION );
+
 	this.littleEndian = true;
+	this.workerSupport = null;
 
+	var materials = this.builder.getMaterials();
+	var defaultPointMaterial = materials[ 'defaultPointMaterial' ];
+	defaultPointMaterial.color.setHex( Math.random() * 0xffffff );
 };
 
+THREE.PCDLoader.prototype = Object.create( THREE.LoaderSupport.LoaderBase.prototype );
+THREE.PCDLoader.prototype.constructor = THREE.PCDLoader;
 
-THREE.PCDLoader.prototype = {
+/**
+ * Set if littleEndian should be used.
+ *
+ * @param littleEndian
+ */
+THREE.PCDLoader.prototype.setLittleEndian = function ( littleEndian ) {
+	this.littleEndian = littleEndian === true;
+};
 
-	constructor: THREE.PCDLoader,
+/*
+ * Load method is provided by THREE.LoaderSupport.LoaderBase.load.
+ */
 
-	load: function ( url, onLoad, onProgress, onError ) {
 
-		var scope = this;
+/**
+ * Parses a PCD binary structure synchronously from given ArrayBuffer and returns a new Group containing
+ * the object. It is converted to Points with a BufferGeometry and a PointsMaterial.
+ * @memberOf THREE.PCDLoader
+ *
+ * @param {ArrayBuffer} data PCD data as Uint8Array
+ */
+THREE.PCDLoader.prototype.parse = function ( data ) {
+	var scope = this;
+	var parser = new THREE.PCDLoader.Parser();
+	parser.setLittleEndian( this.littleEndian );
 
-		var loader = new THREE.FileLoader( scope.manager );
-		loader.setResponseType( 'arraybuffer' );
-		loader.load( url, function ( data ) {
+	var onMeshLoaded = function ( payload ) {
+		var meshes = scope.builder.processPayload( payload );
+		// no mesh alteration, therefore short-cut
+		var mesh;
+		for ( var i in meshes ) {
+			mesh = meshes[ i ];
+			scope.loaderRootNode.add( mesh );
+		}
+	};
+	parser.setCallbackBuilder( onMeshLoaded );
 
-			onLoad( scope.parse( data, url ) );
+	// parse header (always ascii format)
+	parser.parse( data );
 
-		}, onProgress, onError );
+	return this.loaderRootNode;
+};
 
-	},
-
-	parse: function ( data, url ) {
-
-		function parseHeader( data ) {
-
-			var PCDheader = {};
-			var result1 = data.search( /[\r\n]DATA\s(\S*)\s/i );
-			var result2 = /[\r\n]DATA\s(\S*)\s/i.exec( data.substr( result1 - 1 ) );
-
-			PCDheader.data = result2[ 1 ];
-			PCDheader.headerLen = result2[ 0 ].length + result1;
-			PCDheader.str = data.substr( 0, PCDheader.headerLen );
-
-			// remove comments
-
-			PCDheader.str = PCDheader.str.replace( /\#.*/gi, '' );
-
-			// parse
-
-			PCDheader.version = /VERSION (.*)/i.exec( PCDheader.str );
-			PCDheader.fields = /FIELDS (.*)/i.exec( PCDheader.str );
-			PCDheader.size = /SIZE (.*)/i.exec( PCDheader.str );
-			PCDheader.type = /TYPE (.*)/i.exec( PCDheader.str );
-			PCDheader.count = /COUNT (.*)/i.exec( PCDheader.str );
-			PCDheader.width = /WIDTH (.*)/i.exec( PCDheader.str );
-			PCDheader.height = /HEIGHT (.*)/i.exec( PCDheader.str );
-			PCDheader.viewpoint = /VIEWPOINT (.*)/i.exec( PCDheader.str );
-			PCDheader.points = /POINTS (.*)/i.exec( PCDheader.str );
-
-			// evaluate
-
-			if ( PCDheader.version !== null )
-				PCDheader.version = parseFloat( PCDheader.version[ 1 ] );
-
-			if ( PCDheader.fields !== null )
-				PCDheader.fields = PCDheader.fields[ 1 ].split( ' ' );
-
-			if ( PCDheader.type !== null )
-				PCDheader.type = PCDheader.type[ 1 ].split( ' ' );
-
-			if ( PCDheader.width !== null )
-				PCDheader.width = parseInt( PCDheader.width[ 1 ] );
-
-			if ( PCDheader.height !== null )
-				PCDheader.height = parseInt( PCDheader.height[ 1 ] );
-
-			if ( PCDheader.viewpoint !== null )
-				PCDheader.viewpoint = PCDheader.viewpoint[ 1 ];
-
-			if ( PCDheader.points !== null )
-				PCDheader.points = parseInt( PCDheader.points[ 1 ], 10 );
-
-			if ( PCDheader.points === null )
-				PCDheader.points = PCDheader.width * PCDheader.height;
-
-			if ( PCDheader.size !== null ) {
-
-				PCDheader.size = PCDheader.size[ 1 ].split( ' ' ).map( function ( x ) {
-
-					return parseInt( x, 10 );
-
-				} );
-
-			}
-
-			if ( PCDheader.count !== null ) {
-
-				PCDheader.count = PCDheader.count[ 1 ].split( ' ' ).map( function ( x ) {
-
-					return parseInt( x, 10 );
-
-				} );
-
-			} else {
-
-				PCDheader.count = [];
-
-				for ( var i = 0, l = PCDheader.fields.length; i < l; i ++ ) {
-
-					PCDheader.count.push( 1 );
-
+/**
+ * Parses a PCD binary structure asynchronously from given ArrayBuffer. Calls onLoad once loading is complete.
+ * A new Group containing the object is passed to onLoad. The object is converted to Points with a BufferGeometry
+ * and a PointsMaterial.
+ * @memberOf THREE.PCDLoader
+ *
+ * @param {arraybuffer} data PCD data as Uint8Array
+ * @param {callback} onLoad Called after worker successfully completed loading
+ */
+THREE.PCDLoader.prototype.parseAsync = function ( data, onLoad ) {
+	var scope = this;
+	var scopedOnLoad = function () {
+		onLoad(
+			{
+				detail: {
+					loaderRootNode: scope.loaderRootNode,
+					modelName: scope.modelName,
+					instanceNo: scope.instanceNo
 				}
-
 			}
+		);
+	};
+	var scopedOnMeshLoaded = function ( payload ) {
+		var meshes = scope.builder.processPayload( payload );
+		var mesh;
+		for ( var i in meshes ) {
+			mesh = meshes[ i ];
+			scope.loaderRootNode.add( mesh );
+		}
+	};
 
-			PCDheader.offset = {};
+	this.workerSupport = THREE.LoaderSupport.Validator.verifyInput( this.workerSupport, new THREE.LoaderSupport.WorkerSupport() );
+	var buildCode = function ( funcBuildObject, funcBuildSingleton ) {
+		var workerCode = '';
+		workerCode += '/**\n';
+		workerCode += '  * This code was constructed by PCDLoader buildCode.\n';
+		workerCode += '  */\n\n';
+		workerCode += 'THREE = {\n\tLoaderSupport: {},\n\tPCDLoader: {}\n};\n\n';
+		workerCode += funcBuildObject( 'THREE.LoaderUtils', THREE.LoaderUtils );
+		workerCode += funcBuildSingleton( 'THREE.PCDLoader.Parser', THREE.PCDLoader.Parser, 'Parser' );
 
-			var sizeSum = 0;
+		return workerCode;
+	};
+	this.workerSupport.validate( buildCode, 'THREE.PCDLoader.Parser' );
+	this.workerSupport.setCallbacks( scopedOnMeshLoaded, scopedOnLoad );
+	if ( scope.terminateWorkerOnLoad ) this.workerSupport.setTerminateRequested( true );
 
-			for ( var i = 0, l = PCDheader.fields.length; i < l; i ++ ) {
-
-				if ( PCDheader.data === 'ascii' ) {
-
-					PCDheader.offset[ PCDheader.fields[ i ] ] = i;
-
-				} else {
-
-					PCDheader.offset[ PCDheader.fields[ i ] ] = sizeSum;
-					sizeSum += PCDheader.size[ i ];
-
-				}
-
+	this.workerSupport.run(
+		{
+			params: {
+				littleEndian: this.littleEndian
+			},
+			// there is currently no need to send any material properties or logging config to the Parser
+			data: {
+				input: data,
+				options: null
 			}
+		}
+	);
+};
 
-			// for binary only
+/**
+ * Run the loader according the provided instructions. Used for batch-loading orchestrated by {THREE.LoaderSupport.WorkerDirector}
+ * @memberOf THREE.PCDLoader
+ *
+ * @param {THREE.LoaderSupport.PrepData} prepData All parameters and resources required for execution
+ * @param {THREE.LoaderSupport.WorkerSupport} [workerSupportExternal] Use pre-existing WorkerSupport
+ */
+THREE.PCDLoader.prototype.run = function ( prepData, workerSupportExternal ) {
+	THREE.LoaderSupport.LoaderBase.prototype._applyPrepData.call( this, prepData );
+	if ( workerSupportExternal !== null && workerSupportExternal !== undefined ) this.workerSupport = workerSupportExternal;
 
-			PCDheader.rowSize = sizeSum;
+	var available = this.checkResourceDescriptorFiles( prepData.resources,
+		[ { ext: "pcd", type: "Uint8Array", ignore: false } ]
+	);
 
-			return PCDheader;
+	if ( available.pcd.content !== null && available.pcd.content !== undefined ) {
+
+		if ( prepData.useAsync ) {
+
+			this.parseAsync( available.pcd.content, this.callbacks.onLoad );
+
+		} else {
+
+			this.parse( available.pcd.content );
 
 		}
 
-		var textData = THREE.LoaderUtils.decodeText( data );
+	} else {
 
-		// parse header (always ascii format)
+		this.setPath( available.pcd.path );
+		this.load( available.pcd.name, this.callbacks.onLoad, null, null, this.callbacks.onMeshAlter, prepData.useAsync );
 
-		var PCDheader = parseHeader( textData );
+	}
+};
 
-		// parse data
 
+/**
+ * Isolated Parser that is put to the Worker in case of async use
+ * @constructor
+ */
+THREE.PCDLoader.Parser = function () {
+	this.littleEndian = true;
+	this.callbackBuilder = null;
+};
+
+THREE.PCDLoader.Parser.prototype = {
+
+	constructor: THREE.PCDLoader.Parser,
+
+	setLittleEndian: function ( littleEndian ) {
+		this.littleEndian = littleEndian;
+	},
+
+	setCallbackBuilder: function ( callbackBuilder ) {
+		if ( callbackBuilder === null || callbackBuilder === undefined ) throw 'Unable to run as no "builder" callback is set.';
+		this.callbackBuilder = callbackBuilder;
+	},
+
+	parse: function ( data ) {
+		var pcdHeader = this.parseHeader( data );
+		this.parseData( pcdHeader, data );
+	},
+
+	parseHeader: function ( input ) {
+		var data = THREE.LoaderUtils.decodeText( input );
+
+		var result1 = data.search( /[\r\n]DATA\s(\S*)\s/i );
+		var result2 = /[\r\n]DATA\s(\S*)\s/i.exec( data.substr( result1 - 1 ) );
+
+		pcdHeader = {};
+		pcdHeader.data = result2[ 1 ];
+		pcdHeader.headerLen = result2[ 0 ].length + result1;
+		pcdHeader.str = data.substr( 0, pcdHeader.headerLen );
+
+		// remove comments
+
+		pcdHeader.str = pcdHeader.str.replace( /\#.*/gi, '' );
+
+		// parse
+
+		pcdHeader.version = /VERSION (.*)/i.exec( pcdHeader.str );
+		pcdHeader.fields = /FIELDS (.*)/i.exec( pcdHeader.str );
+		pcdHeader.size = /SIZE (.*)/i.exec( pcdHeader.str );
+		pcdHeader.type = /TYPE (.*)/i.exec( pcdHeader.str );
+		pcdHeader.count = /COUNT (.*)/i.exec( pcdHeader.str );
+		pcdHeader.width = /WIDTH (.*)/i.exec( pcdHeader.str );
+		pcdHeader.height = /HEIGHT (.*)/i.exec( pcdHeader.str );
+		pcdHeader.viewpoint = /VIEWPOINT (.*)/i.exec( pcdHeader.str );
+		pcdHeader.points = /POINTS (.*)/i.exec( pcdHeader.str );
+
+		// evaluate
+
+		if ( pcdHeader.version !== null )
+			pcdHeader.version = parseFloat( pcdHeader.version[ 1 ] );
+
+		if ( pcdHeader.fields !== null )
+			pcdHeader.fields = pcdHeader.fields[ 1 ].split( ' ' );
+
+		if ( pcdHeader.type !== null )
+			pcdHeader.type = pcdHeader.type[ 1 ].split( ' ' );
+
+		if ( pcdHeader.width !== null )
+			pcdHeader.width = parseInt( pcdHeader.width[ 1 ] );
+
+		if ( pcdHeader.height !== null )
+			pcdHeader.height = parseInt( pcdHeader.height[ 1 ] );
+
+		if ( pcdHeader.viewpoint !== null )
+			pcdHeader.viewpoint = pcdHeader.viewpoint[ 1 ];
+
+		if ( pcdHeader.points !== null )
+			pcdHeader.points = parseInt( pcdHeader.points[ 1 ], 10 );
+
+		if ( pcdHeader.points === null )
+			pcdHeader.points = pcdHeader.width * pcdHeader.height;
+
+		if ( pcdHeader.size !== null ) {
+
+			pcdHeader.size = pcdHeader.size[ 1 ].split( ' ' ).map( function ( x ) {
+
+				return parseInt( x, 10 );
+
+			} );
+
+		}
+
+		if ( pcdHeader.count !== null ) {
+
+			pcdHeader.count = pcdHeader.count[ 1 ].split( ' ' ).map( function ( x ) {
+
+				return parseInt( x, 10 );
+
+			} );
+
+		} else {
+
+			pcdHeader.count = [];
+
+			for ( var i = 0, l = pcdHeader.fields.length; i < l; i ++ ) {
+
+				pcdHeader.count.push( 1 );
+
+			}
+
+		}
+
+		pcdHeader.offset = {};
+
+		var sizeSum = 0;
+
+		for ( var i = 0, l = pcdHeader.fields.length; i < l; i ++ ) {
+
+			if ( pcdHeader.data === 'ascii' ) {
+
+				pcdHeader.offset[ pcdHeader.fields[ i ] ] = i;
+
+			} else {
+
+				pcdHeader.offset[ pcdHeader.fields[ i ] ] = sizeSum;
+				sizeSum += pcdHeader.size[ i ];
+
+			}
+
+		}
+
+		// for binary only
+		pcdHeader.rowSize = sizeSum;
+
+		return pcdHeader;
+	},
+
+	parseData: function ( pcdHeader, data ) {
 		var position = [];
 		var normal = [];
 		var color = [];
 
+
 		// ascii
+		if ( pcdHeader.data === 'ascii' ) {
 
-		if ( PCDheader.data === 'ascii' ) {
-
-			var offset = PCDheader.offset;
-			var pcdData = textData.substr( PCDheader.headerLen );
+			var offset = pcdHeader.offset;
+			var pcdData = textData.substr( pcdHeader.headerLen );
 			var lines = pcdData.split( '\n' );
 
 			for ( var i = 0, l = lines.length; i < l; i ++ ) {
@@ -199,21 +356,21 @@ THREE.PCDLoader.prototype = {
 
 		}
 
-		// binary
 
-		if ( PCDheader.data === 'binary_compressed' ) {
+		// binary
+		if ( pcdHeader.data === 'binary_compressed' ) {
 
 			console.error( 'THREE.PCDLoader: binary_compressed files are not supported' );
 			return;
 
 		}
 
-		if ( PCDheader.data === 'binary' ) {
+		if ( pcdHeader.data === 'binary' ) {
 
-			var dataview = new DataView( data, PCDheader.headerLen );
-			var offset = PCDheader.offset;
+			var dataview = new DataView( data, pcdHeader.headerLen );
+			var offset = pcdHeader.offset;
 
-			for ( var i = 0, row = 0; i < PCDheader.points; i ++, row += PCDheader.rowSize ) {
+			for ( var i = 0, row = 0; i < pcdHeader.points; i ++, row += pcdHeader.rowSize ) {
 
 				if ( offset.x !== undefined ) {
 
@@ -243,40 +400,39 @@ THREE.PCDLoader.prototype = {
 
 		}
 
-		// build geometry
+		var vertexFA = new Float32Array( position );
+		var normalFA = normal.length > 0 ? new Float32Array( normal ) : null;
+		var colorFA = color.length > 0 ? new Float32Array( color ) : null;
 
-		var geometry = new THREE.BufferGeometry();
-
-		if ( position.length > 0 ) geometry.addAttribute( 'position', new THREE.Float32BufferAttribute( position, 3 ) );
-		if ( normal.length > 0 ) geometry.addAttribute( 'normal', new THREE.Float32BufferAttribute( normal, 3 ) );
-		if ( color.length > 0 ) geometry.addAttribute( 'color', new THREE.Float32BufferAttribute( color, 3 ) );
-
-		geometry.computeBoundingSphere();
-
-		// build material
-
-		var material = new THREE.PointsMaterial( { size: 0.005 } );
-
-		if ( color.length > 0 ) {
-
-			material.vertexColors = true;
-
-		} else {
-
-			material.color.setHex( Math.random() * 0xffffff );
-
-		}
-
-		// build mesh
-
-		var mesh = new THREE.Points( geometry, material );
-		var name = url.split( '' ).reverse().join( '' );
-		name = /([^\/]*)/.exec( name );
-		name = name[ 1 ].split( '' ).reverse().join( '' );
-		mesh.name = name;
-
-		return mesh;
-
+		// Global builder function will construct meshes from the supplied data
+		this.callbackBuilder(
+			{
+				cmd: 'meshData',
+				progress: {
+					numericalValue: 100
+				},
+				params: {},
+				materials: {
+					multiMaterial: false,
+					materialNames: [ color.length > 0 ? 'defaultVertexColorMaterial' : 'defaultPointMaterial' ],
+					materialGroups: null
+				},
+				buffers: {
+					vertices: vertexFA,
+					indices: null,
+					colors: colorFA,
+					normals: normalFA,
+					uvs: null
+				},
+				// 0: mesh, 1: line, 2: point
+				geometryType: 2
+			},
+			[ vertexFA.buffer ],
+			null,
+			colorFA !== null ? [ colorFA.buffer ] : null,
+			normalFA !== null ? [ normalFA.buffer ] : null,
+			null
+		);
 	}
 
 };

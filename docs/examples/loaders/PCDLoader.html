@@ -30,7 +30,7 @@
 			// called when the resource is loaded
 			function ( mesh ) {
 
-				scene.add( mesh );
+				scene.add( event.detail.loaderRootNode );
 
 			},
 			// called when loading is in progresses
@@ -55,43 +55,57 @@
 
 		<h3>[name]( [page:LoadingManager manager] )</h3>
 		<div>
-		[page:LoadingManager manager] — The [page:LoadingManager loadingManager] for the loader to use. Default is [page:LoadingManager THREE.DefaultLoadingManager].
+			[page:LoadingManager manager] — The [page:LoadingManager loadingManager] for the loader to use. Default is [page:LoadingManager THREE.DefaultLoadingManager].
 		</div>
 		<div>
-		Creates a new [name].
+			Use this class to load PCD data from files or to parse PCD data from an ArrayBuffer
 		</div>
 
-		<h2>Properties</h2>
-
-		<h3>[page:Boolean littleEndian]</h3>
-		<div>
-		Default value is true.
-		</div>
 
 		<h2>Methods</h2>
 
-		<h3>[method:null load]( [page:String url], [page:Function onLoad], [page:Function onProgress], [page:Function onError] )</h3>
+
+		<h3>[method:null load] => [page:LoaderSupport.LoaderBase.load]</h3>
+
+
+		<h3>[method:Object3D parse]( [page:Arraybuffer data] )</h3>
 		<div>
-		[page:String url] — A string containing the path/URL of the <em>.pcd</em> file.<br />
-		[page:Function onLoad] — (optional) A function to be called after loading is successfully completed. The function receives loaded [page:Object3D] as an argument.<br />
-		[page:Function onProgress] — (optional) A function to be called while the loading is in progress. The argument will be the XMLHttpRequest instance, which contains [page:Integer total] and [page:Integer loaded] bytes.<br />
-		[page:Function onError] — (optional) A function to be called if an error occurs during loading. The function receives the error as an argument.<br />
+			[page:Arraybuffer data] - PCD data as Uint8Array
 		</div>
 		<div>
-		Begin loading from url and call onLoad with the parsed response content.
+			Parse a <em>PCD</em> binary structure synchronously from given ArrayBuffer and returns a new [page:Group] containing<br />
+			the object. It is converted to [page:Points] with a [page:BufferGeometry] and a [page:PointsMaterial].
 		</div>
 
-		<h3>[method:Object3D parse]( [page:Arraybuffer data],[page:String url] )</h3>
+
+		<h3>[method:null parseAsync]( [page:Arraybuffer data], [page:Function onLoad] )</h3>
 		<div>
-		[page:Arraybuffer data] — The binary structure to parse.
+			[page:Arraybuffer data] - PCD data as Uint8Array<br>
+			[page:Function onLoad] - Called after worker successfully completed loading
 		</div>
 		<div>
-		[page:String url] — The file name or file url.
+			Parse a <em>PCD</em> binary structure asynchronously from given ArrayBuffer. Calls [page:Function onLoad] once loading is complete.<br />
+			A new [page:Group] containing the object is passed to [page:Function onLoad]. The object is converted to [page:Points] with a [page:BufferGeometry] and a [page:PointsMaterial].
+		</div>
+
+
+		<h3>[method:null run]( [page:LoaderSupport.PrepData params], [page:LoaderSupport.WorkerSupport workerSupportExternal] )</h3>
+		<div>
+			[page:LoaderSupport.PrepData params] - prepData All parameters and resources required for execution<br>
+			[page:LoaderSupport.WorkerSupport workerSupportExternal] - Use pre-existing WorkerSupport
 		</div>
 		<div>
-		Parse an <em>pcd</em> binary structure and return an [page:Object3D].<br />
-		The object is converted to [page:Points] with a [page:BufferGeometry] and a [page:PointsMaterial].
+			Run the loader according the provided instructions. Used for batch-loading orchestrated by [page:LoaderSupport.WorkerDirector]
 		</div>
+
+		<h3>[method:null setLittleEndian] ( [page:Boolean littleEndian] )</h3>
+		<div>
+			[page:Boolean littleEndian]
+		</div>
+		<div>
+			Set if littleEndian should be used.
+		</div>
+
 
 		<h2>Source</h2>
 
