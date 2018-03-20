@@ -1,793 +1,1703 @@
 /**
- * @author mrdoob / http://mrdoob.com/
+  * @author Kai Salmen / https://kaisalmen.de
+  * Development repository: https://github.com/kaisalmen/WWOBJLoader
+  */
+
+'use strict';
+
+if ( THREE.OBJLoader === undefined ) { THREE.OBJLoader = {} }
+
+THREE.OBJLoader = function ( manager ) {
+
+	console.info( 'Using THREE.OBJLoader version: ' + THREE.OBJLoader.OBJLOADER2_VERSION );
+
+	this.validator = THREE.OBJLoader.Validator;
+
+	this.manager = ( manager === null || manager === undefined ) ? THREE.DefaultLoadingManager : manager;
+	this.logging = {
+		enabled: true,
+		debug: false
+	};
+
+	this.modelName = '';
+	this.instanceNo = 0;
+	this.path = '';
+	this.useIndices = false;
+	this.disregardNormals = false;
+	this.materialPerSmoothingGroup = false;
+	this.loaderRootNode = new THREE.Group();
+
+	this.meshBuilder = new THREE.OBJLoader.MeshBuilder();
+	this.callbacks = {
+		onProgress: null
+	};
+	this.terminateWorkerOnLoad = true;
+};
+
+THREE.OBJLoader.prototype = Object.create( THREE.OBJLoader.prototype );
+THREE.OBJLoader.prototype.constructor = THREE.OBJLoader;
+THREE.OBJLoader.OBJLOADER2_VERSION = '3.0.0-dev';
+
+
+THREE.OBJLoader.Validator = {
+
+	/**
+	 * If given input is null or undefined, false is returned otherwise true.
+	 *
+	 * @param input Can be anything
+	 * @returns {boolean}
+	 */
+	isValid: function( input ) {
+		return ( input !== null && input !== undefined );
+	},
+
+	/**
+	 * If given input is null or undefined, the defaultValue is returned otherwise the given input.
+	 *
+	 * @param input Can be anything
+	 * @param defaultValue Can be anything
+	 * @returns {*}
+	 */
+	verifyInput: function( input, defaultValue ) {
+		return ( input === null || input === undefined ) ? defaultValue : input;
+	}
+};
+
+/**
+ * Use this class to load OBJ data from files or to parse OBJ data from an arraybuffer
+ * @class
+ *
+ * @param {THREE.DefaultLoadingManager} [manager] The loadingManager for the loader to use. Default is {@link THREE.DefaultLoadingManager}
  */
+THREE.OBJLoader.prototype = {
 
-THREE.OBJLoader = ( function () {
+	constructor: THREE.OBJLoader,
 
-	// o object_name | g group_name
-	var object_pattern = /^[og]\s*(.+)?/;
-	// mtllib file_reference
-	var material_library_pattern = /^mtllib /;
-	// usemtl material_name
-	var material_use_pattern = /^usemtl /;
+	/**
+	 * Enable or disable logging in general (except warn and error), plus enable or disable debug logging.
+	 * @memberOf THREE.OBJLoader
+	 *
+	 * @param {boolean} enabled True or false.
+	 * @param {boolean} debug True or false.
+	 */
+	setLogging: function ( enabled, debug ) {
+		this.logging.enabled = enabled === true;
+		this.logging.debug = debug === true;
+		this.meshBuilder.setLogging( this.logging.enabled, this.logging.debug );
+	},
 
-	function ParserState() {
+	/**
+	 * Set the name of the model.
+	 * @memberOf THREE.OBJLoader
+	 *
+	 * @param {string} modelName
+	 */
+	setModelName: function ( modelName ) {
+		this.modelName = this.validator.verifyInput( modelName, this.modelName );
+	},
 
-		var state = {
-			objects: [],
-			object: {},
+	/**
+	 * The URL of the base path.
+	 * @memberOf THREE.OBJLoader
+	 *
+	 * @param {string} path URL
+	 */
+	setPath: function ( path ) {
+		this.path = this.validator.verifyInput( path, this.path );
+	},
 
-			vertices: [],
-			normals: [],
-			colors: [],
-			uvs: [],
+	/**
+	 * Set the node where the loaded objects will be attached directly.
+	 * @memberOf THREE.OBJLoader
+	 *
+	 * @param {THREE.Object3D} streamMeshesTo Object already attached to scenegraph where new meshes will be attached to
+	 */
+	setStreamMeshesTo: function ( streamMeshesTo ) {
+		this.loaderRootNode = this.validator.verifyInput( streamMeshesTo, this.loaderRootNode );
+	},
 
-			materialLibraries: [],
+	/**
+	 * Set materials loaded by MTLLoader or any other supplier of an Array of {@link THREE.Material}.
+	 * @memberOf THREE.OBJLoader
+	 *
+	 * @param {THREE.Material[]} materials Array of {@link THREE.Material}
+	 */
+	setMaterials: function ( materialsOrmaterialCreator ) {
+		var materials = [];
+		if ( materialsOrmaterialCreator instanceof THREE.MTLLoader.MaterialCreator ) {
 
-			startObject: function ( name, fromDeclaration ) {
+			materials = this._handleMtlMaterials( materialsOrmaterialCreator );
 
-				// If the current object (initial from reset) is not from a g/o declaration in the parsed
-				// file. We need to use it for the first parsed g/o to keep things in sync.
-				if ( this.object && this.object.fromDeclaration === false ) {
+		}
+		this.meshBuilder.setMaterials( materials );
+	},
 
-					this.object.name = name;
-					this.object.fromDeclaration = ( fromDeclaration !== false );
-					return;
+	/**
+	 * Instructs loaders to create indexed {@link THREE.BufferGeometry}.
+	 * @memberOf THREE.OBJLoader
+	 *
+	 * @param {boolean} useIndices=false
+	 */
+	setUseIndices: function ( useIndices ) {
+		this.useIndices = useIndices === true;
+	},
 
-				}
+	/**
+	 * Tells whether normals should be completely disregarded and regenerated.
+	 * @memberOf THREE.OBJLoader
+	 *
+	 * @param {boolean} disregardNormals=false
+	 */
+	setDisregardNormals: function ( disregardNormals ) {
+		this.disregardNormals = disregardNormals === true;
+	},
 
-				var previousMaterial = ( this.object && typeof this.object.currentMaterial === 'function' ? this.object.currentMaterial() : undefined );
+	/**
+	 * Tells whether a material shall be created per smoothing group.
+	 * @memberOf THREE.OBJLoader
+	 *
+	 * @param {boolean} materialPerSmoothingGroup=false
+	 */
+	setMaterialPerSmoothingGroup: function ( materialPerSmoothingGroup ) {
+		this.materialPerSmoothingGroup = materialPerSmoothingGroup === true;
+	},
 
-				if ( this.object && typeof this.object._finalize === 'function' ) {
+	_setCallbacks: function ( onProgress, onMeshAlter, onLoadMaterials ) {
+		if ( this.validator.isValid( onProgress ) ) this.callbacks.onProgress = onProgress;
+		this.meshBuilder._setCallbacks( onProgress, onMeshAlter, onLoadMaterials );
+	},
 
-					this.object._finalize( true );
+	/**
+	 * Announce feedback which is give to the registered callbacks.
+	 * @memberOf THREE.OBJLoader
+	 * @private
+	 *
+	 * @param {string} type The type of event
+	 * @param {string} text Textual description of the event
+	 * @param {number} numericalValue Numerical value describing the progress
+	 */
+	_onProgress: function ( type, text, numericalValue ) {
+		var content = this.validator.isValid( text ) ? text : '';
+		var event = {
+			detail: {
+				type: type,
+				modelName: this.modelName,
+				instanceNo: this.instanceNo,
+				text: content,
+				numericalValue: numericalValue
+			}
+		};
+		if ( this.validator.isValid( this.callbacks.onProgress ) ) this.callbacks.onProgress( event );
+		if ( this.logging.enabled && this.logging.debug ) console.debug( content );
+	},
 
-				}
+	_onError: function ( event ) {
+		var output = 'Error occurred while downloading!';
 
-				this.object = {
-					name: name || '',
-					fromDeclaration: ( fromDeclaration !== false ),
+		if ( event.currentTarget && event.currentTarget.statusText !== null ) {
 
-					geometry: {
-						vertices: [],
-						normals: [],
-						colors: [],
-						uvs: []
-					},
-					materials: [],
-					smooth: true,
+			output += '\nurl: ' + event.currentTarget.responseURL + '\nstatus: ' + event.currentTarget.statusText;
 
-					startMaterial: function ( name, libraries ) {
+		}
+		var scope = this;
+		var onProgressScoped = function ( text, numericalValue ) {
+			scope._onProgress( 'error', text, numericalValue );
+		};
+		onProgressScoped( output, - 1 );
+		throw output;
+	},
 
-						var previous = this._finalize( false );
+	/**
+	 * Use this convenient method to load a file at the given URL. By default the fileLoader uses an ArrayBuffer.
+	 * @memberOf THREE.OBJLoader
+	 *
+	 * @param {string}  url A string containing the path/URL of the file to be loaded.
+	 * @param {callback} onLoad A function to be called after loading is successfully completed. The function receives loaded Object3D as an argument.
+	 * @param {callback} [onProgress] A function to be called while the loading is in progress. The argument will be the XMLHttpRequest instance, which contains total and Integer bytes.
+	 * @param {callback} [onError] A function to be called if an error occurs during loading. The function receives the error as an argument.
+	 * @param {callback} [onMeshAlter] A function to be called after a new mesh raw data becomes available for alteration.
+	 */
+	load: function ( url, onLoad, onProgress, onError, onMeshAlter ) {
+		var resource = new THREE.OBJLoader.ResourceDescriptor( url, 'OBJ' );
+		this._loadObj( resource, onLoad, onProgress, onError, onMeshAlter );
+	},
 
-						// New usemtl declaration overwrites an inherited material, except if faces were declared
-						// after the material, then it must be preserved for proper MultiMaterial continuation.
-						if ( previous && ( previous.inherited || previous.groupCount <= 0 ) ) {
+	_loadObj: function ( resource, onLoad, onProgress, onError, onMeshAlter ) {
+		if ( ! this.validator.isValid( onError ) ) onError = this._onError;
 
-							this.materials.splice( previous.index, 1 );
+		// fast-fail
+		if ( ! this.validator.isValid( resource ) ) onError( 'An invalid ResourceDescriptor was provided. Unable to continue!' );
+		var scope = this;
+		var fileLoaderOnLoad = function ( content ) {
 
-						}
+			resource.content = content;
+			scope._setCallbacks( null, onMeshAlter, null );
+			onLoad( scope.parse( content ) );
+		};
 
-						var material = {
-							index: this.materials.length,
-							name: name || '',
-							mtllib: ( Array.isArray( libraries ) && libraries.length > 0 ? libraries[ libraries.length - 1 ] : '' ),
-							smooth: ( previous !== undefined ? previous.smooth : this.smooth ),
-							groupStart: ( previous !== undefined ? previous.groupEnd : 0 ),
-							groupEnd: - 1,
-							groupCount: - 1,
-							inherited: false,
+		// fast-fail
+		if ( ! this.validator.isValid( resource.url ) || this.validator.isValid( resource.content ) ) {
 
-							clone: function ( index ) {
+			fileLoaderOnLoad( this.validator.isValid( resource.content ) ? resource.content : null );
 
-								var cloned = {
-									index: ( typeof index === 'number' ? index : this.index ),
-									name: this.name,
-									mtllib: this.mtllib,
-									smooth: this.smooth,
-									groupStart: 0,
-									groupEnd: - 1,
-									groupCount: - 1,
-									inherited: false
-								};
-								cloned.clone = this.clone.bind( cloned );
-								return cloned;
+		} else {
 
-							}
-						};
+			if ( ! this.validator.isValid( onProgress ) ) {
+				var numericalValueRef = 0;
+				var numericalValue = 0;
+				onProgress = function ( event ) {
+					if ( ! event.lengthComputable ) return;
 
-						this.materials.push( material );
+					numericalValue = event.loaded / event.total;
+					if ( numericalValue > numericalValueRef ) {
 
-						return material;
-
-					},
-
-					currentMaterial: function () {
-
-						if ( this.materials.length > 0 ) {
-
-							return this.materials[ this.materials.length - 1 ];
-
-						}
-
-						return undefined;
-
-					},
-
-					_finalize: function ( end ) {
-
-						var lastMultiMaterial = this.currentMaterial();
-						if ( lastMultiMaterial && lastMultiMaterial.groupEnd === - 1 ) {
-
-							lastMultiMaterial.groupEnd = this.geometry.vertices.length / 3;
-							lastMultiMaterial.groupCount = lastMultiMaterial.groupEnd - lastMultiMaterial.groupStart;
-							lastMultiMaterial.inherited = false;
-
-						}
-
-						// Ignore objects tail materials if no face declarations followed them before a new o/g started.
-						if ( end && this.materials.length > 1 ) {
-
-							for ( var mi = this.materials.length - 1; mi >= 0; mi -- ) {
-
-								if ( this.materials[ mi ].groupCount <= 0 ) {
-
-									this.materials.splice( mi, 1 );
-
-								}
-
-							}
-
-						}
-
-						// Guarantee at least one empty material, this makes the creation later more straight forward.
-						if ( end && this.materials.length === 0 ) {
-
-							this.materials.push( {
-								name: '',
-								smooth: this.smooth
-							} );
-
-						}
-
-						return lastMultiMaterial;
+						numericalValueRef = numericalValue;
+						var output = 'Download of "' + resource.url + '": ' + (numericalValue * 100).toFixed( 2 ) + '%';
+						scope._onProgress( 'progressLoad', output, numericalValue );
 
 					}
 				};
-
-				// Inherit previous objects material.
-				// Spec tells us that a declared material must be set to all objects until a new material is declared.
-				// If a usemtl declaration is encountered while this new object is being parsed, it will
-				// overwrite the inherited material. Exception being that there was already face declarations
-				// to the inherited material, then it will be preserved for proper MultiMaterial continuation.
-
-				if ( previousMaterial && previousMaterial.name && typeof previousMaterial.clone === 'function' ) {
-
-					var declared = previousMaterial.clone( 0 );
-					declared.inherited = true;
-					this.object.materials.push( declared );
-
-				}
-
-				this.objects.push( this.object );
-
-			},
-
-			finalize: function () {
-
-				if ( this.object && typeof this.object._finalize === 'function' ) {
-
-					this.object._finalize( true );
-
-				}
-
-			},
-
-			parseVertexIndex: function ( value, len ) {
-
-				var index = parseInt( value, 10 );
-				return ( index >= 0 ? index - 1 : index + len / 3 ) * 3;
-
-			},
-
-			parseNormalIndex: function ( value, len ) {
-
-				var index = parseInt( value, 10 );
-				return ( index >= 0 ? index - 1 : index + len / 3 ) * 3;
-
-			},
-
-			parseUVIndex: function ( value, len ) {
-
-				var index = parseInt( value, 10 );
-				return ( index >= 0 ? index - 1 : index + len / 2 ) * 2;
-
-			},
-
-			addVertex: function ( a, b, c ) {
-
-				var src = this.vertices;
-				var dst = this.object.geometry.vertices;
-
-				dst.push( src[ a + 0 ], src[ a + 1 ], src[ a + 2 ] );
-				dst.push( src[ b + 0 ], src[ b + 1 ], src[ b + 2 ] );
-				dst.push( src[ c + 0 ], src[ c + 1 ], src[ c + 2 ] );
-
-			},
-
-			addVertexPoint: function ( a ) {
-
-				var src = this.vertices;
-				var dst = this.object.geometry.vertices;
-
-				dst.push( src[ a + 0 ], src[ a + 1 ], src[ a + 2 ] );
-
-			},
-
-			addVertexLine: function ( a ) {
-
-				var src = this.vertices;
-				var dst = this.object.geometry.vertices;
-
-				dst.push( src[ a + 0 ], src[ a + 1 ], src[ a + 2 ] );
-
-			},
-
-			addNormal: function ( a, b, c ) {
-
-				var src = this.normals;
-				var dst = this.object.geometry.normals;
-
-				dst.push( src[ a + 0 ], src[ a + 1 ], src[ a + 2 ] );
-				dst.push( src[ b + 0 ], src[ b + 1 ], src[ b + 2 ] );
-				dst.push( src[ c + 0 ], src[ c + 1 ], src[ c + 2 ] );
-
-			},
-
-			addColor: function ( a, b, c ) {
-
-				var src = this.colors;
-				var dst = this.object.geometry.colors;
-
-				dst.push( src[ a + 0 ], src[ a + 1 ], src[ a + 2 ] );
-				dst.push( src[ b + 0 ], src[ b + 1 ], src[ b + 2 ] );
-				dst.push( src[ c + 0 ], src[ c + 1 ], src[ c + 2 ] );
-
-			},
-
-			addUV: function ( a, b, c ) {
-
-				var src = this.uvs;
-				var dst = this.object.geometry.uvs;
-
-				dst.push( src[ a + 0 ], src[ a + 1 ] );
-				dst.push( src[ b + 0 ], src[ b + 1 ] );
-				dst.push( src[ c + 0 ], src[ c + 1 ] );
-
-			},
-
-			addUVLine: function ( a ) {
-
-				var src = this.uvs;
-				var dst = this.object.geometry.uvs;
-
-				dst.push( src[ a + 0 ], src[ a + 1 ] );
-
-			},
-
-			addFace: function ( a, b, c, ua, ub, uc, na, nb, nc ) {
-
-				var vLen = this.vertices.length;
-
-				var ia = this.parseVertexIndex( a, vLen );
-				var ib = this.parseVertexIndex( b, vLen );
-				var ic = this.parseVertexIndex( c, vLen );
-
-				this.addVertex( ia, ib, ic );
-
-				if ( ua !== undefined && ua !== '' ) {
-
-					var uvLen = this.uvs.length;
-					ia = this.parseUVIndex( ua, uvLen );
-					ib = this.parseUVIndex( ub, uvLen );
-					ic = this.parseUVIndex( uc, uvLen );
-					this.addUV( ia, ib, ic );
-
-				}
-
-				if ( na !== undefined && na !== '' ) {
-
-					// Normals are many times the same. If so, skip function call and parseInt.
-					var nLen = this.normals.length;
-					ia = this.parseNormalIndex( na, nLen );
-
-					ib = na === nb ? ia : this.parseNormalIndex( nb, nLen );
-					ic = na === nc ? ia : this.parseNormalIndex( nc, nLen );
-
-					this.addNormal( ia, ib, ic );
-
-				}
-
-				if ( this.colors.length > 0 ) {
-
-					this.addColor( ia, ib, ic );
-
-				}
-
-			},
-
-			addPointGeometry: function ( vertices ) {
-
-				this.object.geometry.type = 'Points';
-
-				var vLen = this.vertices.length;
-
-				for ( var vi = 0, l = vertices.length; vi < l; vi ++ ) {
-
-					this.addVertexPoint( this.parseVertexIndex( vertices[ vi ], vLen ) );
-
-				}
-
-			},
-
-			addLineGeometry: function ( vertices, uvs ) {
-
-				this.object.geometry.type = 'Line';
-
-				var vLen = this.vertices.length;
-				var uvLen = this.uvs.length;
-
-				for ( var vi = 0, l = vertices.length; vi < l; vi ++ ) {
-
-					this.addVertexLine( this.parseVertexIndex( vertices[ vi ], vLen ) );
-
-				}
-
-				for ( var uvi = 0, l = uvs.length; uvi < l; uvi ++ ) {
-
-					this.addUVLine( this.parseUVIndex( uvs[ uvi ], uvLen ) );
-
-				}
-
 			}
 
+
+			var fileLoader = new THREE.FileLoader( this.manager );
+			fileLoader.setPath( this.path );
+			fileLoader.setResponseType( 'arraybuffer' );
+			fileLoader.load( resource.url, fileLoaderOnLoad, onProgress, onError );
+
+		}
+	},
+
+	_applyPrepData: function ( prepData ) {
+		if ( this.validator.isValid( prepData ) ) {
+
+			this.setLogging( prepData.logging.enabled, prepData.logging.debug );
+			this.setModelName( prepData.modelName );
+			this.setStreamMeshesTo( prepData.streamMeshesTo );
+			this.meshBuilder.setMaterials( prepData.materials );
+			this.setUseIndices( prepData.useIndices );
+			this.setDisregardNormals( prepData.disregardNormals );
+			this.setMaterialPerSmoothingGroup( prepData.materialPerSmoothingGroup );
+
+			this._setCallbacks( prepData.getCallbacks() );
+
+		}
+	},
+
+	/**
+	 * Parses OBJ data synchronously from arraybuffer or string.
+	 * @memberOf THREE.OBJLoader
+	 *
+	 * @param {arraybuffer|string} content OBJ data as Uint8Array or String
+	 */
+	parse: function ( content ) {
+		// fast-fail in case of illegal data
+		if ( ! this.validator.isValid( content ) ) {
+
+			console.warn( 'Provided content is not a valid ArrayBuffer or String.' );
+			return this.loaderRootNode;
+
+		}
+		if ( this.logging.enabled ) console.time( 'OBJLoader parse: ' + this.modelName );
+		this.meshBuilder.init();
+
+		var parser = new THREE.OBJLoader.Parser();
+		parser.setLogging( this.logging.enabled, this.logging.debug );
+		parser.setMaterialPerSmoothingGroup( this.materialPerSmoothingGroup );
+		parser.setUseIndices( this.useIndices );
+		parser.setDisregardNormals( this.disregardNormals );
+		// sync code works directly on the material references
+		parser.setMaterials( this.meshBuilder.getMaterials() );
+
+		var scope = this;
+		var onMeshLoaded = function ( payload ) {
+			var meshes = scope.meshBuilder.processPayload( payload );
+			var mesh;
+			for ( var i in meshes ) {
+				mesh = meshes[ i ];
+				scope.loaderRootNode.add( mesh );
+			}
+		};
+		parser.setCallbackMeshBuilder( onMeshLoaded );
+		var onProgressScoped = function ( text, numericalValue ) {
+			scope._onProgress( 'progressParse', text, numericalValue );
+		};
+		parser.setCallbackProgress( onProgressScoped );
+
+		if ( content instanceof ArrayBuffer || content instanceof Uint8Array ) {
+
+			if ( this.logging.enabled ) console.info( 'Parsing arrayBuffer...' );
+			parser.parse( content );
+
+		} else if ( typeof(content) === 'string' || content instanceof String ) {
+
+			if ( this.logging.enabled ) console.info( 'Parsing text...' );
+			parser.parseText( content );
+
+		} else {
+
+			throw 'Provided content was neither of type String nor Uint8Array! Aborting...';
+
+		}
+		if ( this.logging.enabled ) console.timeEnd( 'OBJLoader parse: ' + this.modelName );
+
+		return this.loaderRootNode;
+	},
+
+	buildWorkerCode: function ( funcBuildObject, funcBuildSingleton ) {
+		var workerCode = '';
+		workerCode += '/**\n';
+		workerCode += '  * This code was constructed by THREE.OBJLoader.buildWorkerCode.\n';
+		workerCode += '  */\n\n';
+		workerCode += funcBuildSingleton( 'THREE.OBJLoader.Parser', THREE.OBJLoader.Parser );
+
+		return workerCode;
+	},
+
+	/**
+	 * Utility method for loading an mtl file according resource description. Provide url or content.
+	 * @memberOf THREE.OBJLoader
+	 *
+	 * @param {string} url URL to the file
+	 * @param {Object} content The file content as arraybuffer or text
+	 * @param {function} callbackOnLoad Callback to be called after successful load
+	 * @param {string} [crossOrigin] CORS value
+	 * @param {Object} [materialOptions] Set material loading options for MTLLoader
+	 */
+	loadMtl: function ( url, content, callbackOnLoad, crossOrigin, materialOptions ) {
+		var resource = new THREE.OBJLoader.ResourceDescriptor( url, 'MTL' );
+		resource.setContent( content );
+		this._loadMtl( resource, callbackOnLoad, crossOrigin, materialOptions );
+	},
+
+	_loadMtl: function ( resource, callbackOnLoad, crossOrigin, materialOptions ) {
+		if ( THREE.MTLLoader === undefined ) console.error( '"THREE.MTLLoader" is not available. "THREE.OBJLoader" requires it for loading MTL files.' );
+		if ( this.validator.isValid( resource ) && this.logging.enabled ) console.time( 'Loading MTL: ' + resource.name );
+
+		var scope = this;
+		var processMaterials = function ( materialCreator ) {
+			var materials = [];
+			if ( scope.validator.isValid( materialCreator ) ) {
+
+				materialCreator.preload();
+				materials = this._handleMtlMaterials( materialCreator );
+			}
+
+			if ( scope.validator.isValid( resource ) && scope.logging.enabled ) console.timeEnd( 'Loading MTL: ' + resource.name );
+			callbackOnLoad( materials, materialCreator );
 		};
 
-		state.startObject( '', false );
+		// fast-fail
+		if ( ! this.validator.isValid( resource ) || (! this.validator.isValid( resource.content ) && ! this.validator.isValid( resource.url )) ) {
 
-		return state;
+			processMaterials();
+
+		} else {
+
+			var mtlLoader = new THREE.MTLLoader( this.manager );
+			crossOrigin = this.validator.verifyInput( crossOrigin, 'anonymous' );
+			mtlLoader.setCrossOrigin( crossOrigin );
+			mtlLoader.setPath( resource.path );
+			if ( this.validator.isValid( materialOptions ) ) mtlLoader.setMaterialOptions( materialOptions );
+
+			if ( this.validator.isValid( resource.content ) ) {
+
+				processMaterials( this.validator.isValid( resource.content ) ? mtlLoader.parse( resource.content ) : null );
+
+			} else if ( this.validator.isValid( resource.url ) ) {
+
+				var onProgressScoped = function ( text, numericalValue ) {
+					scope._onProgress( 'progressLoadMtl', text, numericalValue );
+				};
+
+				var fileLoader = new THREE.FileLoader( this.manager );
+				fileLoader.load( resource.url, function ( text ) {
+
+					resource.content = text;
+					processMaterials( mtlLoader.parse( text ) );
+
+				}, onProgressScoped, this._onError );
+
+			}
+		}
+	},
+
+	_handleMtlMaterials: function ( materialCreator ) {
+		var materialCreatorMaterials = materialCreator.materials;
+		var materials = [];
+		for ( var materialName in materialCreatorMaterials ) {
+
+			if ( materialCreatorMaterials.hasOwnProperty( materialName ) ) {
+
+				materials[ materialName ] = materialCreatorMaterials[ materialName ];
+
+			}
+		}
+		return materials;
+	}
+};
+
+
+/**
+ * A resource description used by {@link THREE.OBJLoader}.
+ * @class
+ *
+ * @param {string} url URL to the file
+ * @param {string} extension The file extension (type)
+ */
+THREE.OBJLoader.ResourceDescriptor = function ( url, extension ) {
+	var urlParts = url.split( '/' );
+
+	this.path = null;
+	this.name = null;
+	this.url = url;
+	if ( urlParts.length < 2 ) {
+
+		this.name = url;
+
+	} else {
+
+		var urlPartsPath = urlParts.slice( 0, urlParts.length - 1).join( '/' ) + '/';
+		if ( urlPartsPath !== undefined && urlPartsPath !== null ) this.path = urlPartsPath;
+		var urlPartsName = urlParts[ urlParts.length - 1 ];
+		if ( urlPartsName !== undefined && urlPartsName !== null ) this.name = urlPartsName;
 
 	}
+	this.extension = "default";
+	if ( extension !== undefined && extension !== null ) this.extension = extension;
+	this.extension = this.extension.trim();
+	this.content = null;
+};
 
-	//
+THREE.OBJLoader.ResourceDescriptor.prototype = {
 
-	function OBJLoader( manager ) {
+	constructor: THREE.OBJLoader.ResourceDescriptor,
 
-		this.manager = ( manager !== undefined ) ? manager : THREE.DefaultLoadingManager;
-
-		this.materials = null;
-
+	/**
+	 * Set the content of this resource
+	 * @memberOf THREE.OBJLoader.ResourceDescriptor
+	 *
+	 * @param {Object} content The file content as arraybuffer or text
+	 */
+	setContent: function ( content ) {
+		if ( content !== undefined && content !== null ) this.content = content;
 	}
+};
 
-	OBJLoader.prototype = {
 
-		constructor: OBJLoader,
+/**
+ * Parse OBJ data either from ArrayBuffer or string
+ * @class
+ */
+THREE.OBJLoader.Parser = function() {
+	this.callbackProgress = null;
+	this.callbackMeshBuilder = null;
+	this.contentRef = null;
+	this.legacyMode = false;
 
-		load: function ( url, onLoad, onProgress, onError ) {
+	this.materials = {};
+	this.materialPerSmoothingGroup = false;
+	this.useIndices = false;
+	this.disregardNormals = false;
 
-			var scope = this;
+	this.vertices = [];
+	this.colors = [];
+	this.normals = [];
+	this.uvs = [];
 
-			var loader = new THREE.FileLoader( scope.manager );
-			loader.setPath( this.path );
-			loader.load( url, function ( text ) {
+	this.rawMesh = {
+		objectName: '',
+		groupName: '',
+		activeMtlName: '',
+		mtllibName: '',
 
-				onLoad( scope.parse( text ) );
-
-			}, onProgress, onError );
-
+		// reset with new mesh
+		faceType: - 1,
+		subGroups: [],
+		subGroupInUse: null,
+		smoothingGroup: {
+			splitMaterials: false,
+			normalized: - 1,
+			real: - 1
 		},
+		counts: {
+			doubleIndicesCount: 0,
+			faceCount: 0,
+			mtlCount: 0,
+			smoothingGroupCount: 0
+		}
+	};
 
-		setPath: function ( value ) {
+	this.inputObjectCount = 1;
+	this.outputObjectCount = 1;
+	this.globalCounts = {
+		vertices: 0,
+		faces: 0,
+		doubleIndicesCount: 0,
+		lineByte: 0,
+		currentByte: 0,
+		totalBytes: 0
+	};
 
-			this.path = value;
+	this.logging = {
+		enabled: true,
+		debug: false
+	};
+};
 
-			return this;
+THREE.OBJLoader.Parser.prototype = {
 
-		},
+	constructor: THREE.OBJLoader.Parser,
 
-		setMaterials: function ( materials ) {
+	resetRawMesh: function () {
+		// faces are stored according combined index of group, material and smoothingGroup (0 or not)
+		this.rawMesh.subGroups = [];
+		this.rawMesh.subGroupInUse = null;
+		this.rawMesh.smoothingGroup.normalized = - 1;
+		this.rawMesh.smoothingGroup.real = - 1;
 
-			this.materials = materials;
+		// this default index is required as it is possible to define faces without 'g' or 'usemtl'
+		this.pushSmoothingGroup( 1 );
 
-			return this;
+		this.rawMesh.counts.doubleIndicesCount = 0;
+		this.rawMesh.counts.faceCount = 0;
+		this.rawMesh.counts.mtlCount = 0;
+		this.rawMesh.counts.smoothingGroupCount = 0;
+	},
 
-		},
+	setMaterialPerSmoothingGroup: function ( materialPerSmoothingGroup ) {
+		this.materialPerSmoothingGroup = materialPerSmoothingGroup;
+	},
 
-		parse: function ( text ) {
+	setUseIndices: function ( useIndices ) {
+		this.useIndices = useIndices;
+	},
 
-			console.time( 'OBJLoader' );
+	setDisregardNormals: function ( disregardNormals ) {
+		this.disregardNormals = disregardNormals;
+	},
 
-			var state = new ParserState();
+	setMaterials: function ( materials ) {
+		this.materials = materials;
+	},
 
-			if ( text.indexOf( '\r\n' ) !== - 1 ) {
+	setCallbackMeshBuilder: function ( callbackMeshBuilder ) {
+		this.callbackMeshBuilder = callbackMeshBuilder;
+	},
 
-				// This is faster than String.split with regex that splits on both
-				text = text.replace( /\r\n/g, '\n' );
+	setCallbackProgress: function ( callbackProgress ) {
+		this.callbackProgress = callbackProgress;
+	},
 
+	setLogging: function ( enabled, debug ) {
+		this.logging.enabled = enabled === true;
+		this.logging.debug = debug === true;
+	},
+
+	configure: function () {
+		if ( this.callbackMeshBuilder === undefined || this.callbackMeshBuilder === null ) throw 'Unable to run as no callback for building meshes is set.';
+
+		this.pushSmoothingGroup( 1 );
+		if ( this.logging.enabled ) {
+
+			var matKeys = Object.keys( this.materials );
+			var matNames = (matKeys.length > 0) ? '\n\tmaterialNames:\n\t\t- ' + matKeys.join( '\n\t\t- ' ) : '\n\tmaterialNames: None';
+			var printedConfig = 'OBJLoader.Parser configuration:'
+				+ matNames
+				+ '\n\tmaterialPerSmoothingGroup: ' + this.materialPerSmoothingGroup
+				+ '\n\tuseIndices: ' + this.useIndices
+				+ '\n\tdisregardNormals: ' + this.disregardNormals
+				+ '\n\tcallbackMeshBuilderName: ' + this.callbackMeshBuilder.name
+				+ '\n\tcallbackProgressName: ' + this.callbackProgress.name;
+			console.info( printedConfig );
+		}
+	},
+
+	/**
+	 * Parse the provided arraybuffer
+	 * @memberOf Parser
+	 *
+	 * @param {Uint8Array} arrayBuffer OBJ data as Uint8Array
+	 */
+	parse: function ( arrayBuffer ) {
+		if ( this.logging.enabled ) console.time( 'OBJLoader.Parser.parse' );
+		this.configure();
+
+		var arrayBufferView = new Uint8Array( arrayBuffer );
+		this.contentRef = arrayBufferView;
+		var length = arrayBufferView.byteLength;
+		this.globalCounts.totalBytes = length;
+		var buffer = new Array( 128 );
+
+		for ( var code, word = '', bufferPointer = 0, slashesCount = 0, i = 0; i < length; i ++ ) {
+
+			code = arrayBufferView[ i ];
+			switch ( code ) {
+				// space
+				case 32:
+					if ( word.length > 0 ) buffer[ bufferPointer ++ ] = word;
+					word = '';
+					break;
+				// slash
+				case 47:
+					if ( word.length > 0 ) buffer[ bufferPointer ++ ] = word;
+					slashesCount ++;
+					word = '';
+					break;
+
+				// LF
+				case 10:
+					if ( word.length > 0 ) buffer[ bufferPointer ++ ] = word;
+					word = '';
+					this.globalCounts.lineByte = this.globalCounts.currentByte;
+					this.globalCounts.currentByte = i;
+					this.processLine( buffer, bufferPointer, slashesCount );
+					bufferPointer = 0;
+					slashesCount = 0;
+					break;
+
+				// CR
+				case 13:
+					break;
+
+				default:
+					word += String.fromCharCode( code );
+					break;
 			}
+		}
+		this.finalizeParsing();
+		if ( this.logging.enabled ) console.timeEnd( 'OBJLoader.Parser.parse' );
+	},
 
-			if ( text.indexOf( '\\\n' ) !== - 1 ) {
+	/**
+	 * Parse the provided text
+	 * @memberOf Parser
+	 *
+	 * @param {string} text OBJ data as string
+	 */
+	parseText: function ( text ) {
+		if ( this.logging.enabled ) console.time( 'OBJLoader.Parser.parseText' );
+		this.configure();
+		this.legacyMode = true;
+		this.contentRef = text;
+		var length = text.length;
+		this.globalCounts.totalBytes = length;
+		var buffer = new Array( 128 );
 
-				// join lines separated by a line continuation character (\)
-				text = text.replace( /\\\n/g, '' );
+		for ( var char, word = '', bufferPointer = 0, slashesCount = 0, i = 0; i < length; i ++ ) {
 
+			char = text[ i ];
+			switch ( char ) {
+				case ' ':
+					if ( word.length > 0 ) buffer[ bufferPointer ++ ] = word;
+					word = '';
+					break;
+
+				case '/':
+					if ( word.length > 0 ) buffer[ bufferPointer ++ ] = word;
+					slashesCount ++;
+					word = '';
+					break;
+
+				case '\n':
+					if ( word.length > 0 ) buffer[ bufferPointer ++ ] = word;
+					word = '';
+					this.globalCounts.lineByte = this.globalCounts.currentByte;
+					this.globalCounts.currentByte = i;
+					this.processLine( buffer, bufferPointer, slashesCount );
+					bufferPointer = 0;
+					slashesCount = 0;
+					break;
+
+				case '\r':
+					break;
+
+				default:
+					word += char;
 			}
+		}
+		this.finalizeParsing();
+		if ( this.logging.enabled ) console.timeEnd( 'OBJLoader.Parser.parseText' );
+	},
 
-			var lines = text.split( '\n' );
-			var line = '', lineFirstChar = '';
-			var lineLength = 0;
-			var result = [];
+	processLine: function ( buffer, bufferPointer, slashesCount ) {
+		if ( bufferPointer < 1 ) return;
 
-			// Faster to just trim left side of the line. Use if available.
-			var trimLeft = ( typeof ''.trimLeft === 'function' );
+		var reconstructString = function ( content, legacyMode, start, stop ) {
+			var line = '';
+			if ( stop > start ) {
 
-			for ( var i = 0, l = lines.length; i < l; i ++ ) {
+				var i;
+				if ( legacyMode ) {
 
-				line = lines[ i ];
-
-				line = trimLeft ? line.trimLeft() : line.trim();
-
-				lineLength = line.length;
-
-				if ( lineLength === 0 ) continue;
-
-				lineFirstChar = line.charAt( 0 );
-
-				// @todo invoke passed in handler if any
-				if ( lineFirstChar === '#' ) continue;
-
-				if ( lineFirstChar === 'v' ) {
-
-					var data = line.split( /\s+/ );
-
-					switch ( data[ 0 ] ) {
-
-						case 'v':
-							state.vertices.push(
-								parseFloat( data[ 1 ] ),
-								parseFloat( data[ 2 ] ),
-								parseFloat( data[ 3 ] )
-							);
-							if ( data.length === 8 ) {
-
-								state.colors.push(
-									parseFloat( data[ 4 ] ),
-									parseFloat( data[ 5 ] ),
-									parseFloat( data[ 6 ] )
-
-								);
-
-							}
-							break;
-						case 'vn':
-							state.normals.push(
-								parseFloat( data[ 1 ] ),
-								parseFloat( data[ 2 ] ),
-								parseFloat( data[ 3 ] )
-							);
-							break;
-						case 'vt':
-							state.uvs.push(
-								parseFloat( data[ 1 ] ),
-								parseFloat( data[ 2 ] )
-							);
-							break;
-
-					}
-
-				} else if ( lineFirstChar === 'f' ) {
-
-					var lineData = line.substr( 1 ).trim();
-					var vertexData = lineData.split( /\s+/ );
-					var faceVertices = [];
-
-					// Parse the face vertex data into an easy to work with format
-
-					for ( var j = 0, jl = vertexData.length; j < jl; j ++ ) {
-
-						var vertex = vertexData[ j ];
-
-						if ( vertex.length > 0 ) {
-
-							var vertexParts = vertex.split( '/' );
-							faceVertices.push( vertexParts );
-
-						}
-
-					}
-
-					// Draw an edge between the first vertex and all subsequent vertices to form an n-gon
-
-					var v1 = faceVertices[ 0 ];
-
-					for ( var j = 1, jl = faceVertices.length - 1; j < jl; j ++ ) {
-
-						var v2 = faceVertices[ j ];
-						var v3 = faceVertices[ j + 1 ];
-
-						state.addFace(
-							v1[ 0 ], v2[ 0 ], v3[ 0 ],
-							v1[ 1 ], v2[ 1 ], v3[ 1 ],
-							v1[ 2 ], v2[ 2 ], v3[ 2 ]
-						);
-
-					}
-
-				} else if ( lineFirstChar === 'l' ) {
-
-					var lineParts = line.substring( 1 ).trim().split( " " );
-					var lineVertices = [], lineUVs = [];
-
-					if ( line.indexOf( "/" ) === - 1 ) {
-
-						lineVertices = lineParts;
-
-					} else {
-
-						for ( var li = 0, llen = lineParts.length; li < llen; li ++ ) {
-
-							var parts = lineParts[ li ].split( "/" );
-
-							if ( parts[ 0 ] !== "" ) lineVertices.push( parts[ 0 ] );
-							if ( parts[ 1 ] !== "" ) lineUVs.push( parts[ 1 ] );
-
-						}
-
-					}
-					state.addLineGeometry( lineVertices, lineUVs );
-
-				} else if ( lineFirstChar === 'p' ) {
-
-					var lineData = line.substr( 1 ).trim();
-					var pointData = lineData.split( " " );
-
-					state.addPointGeometry( pointData );
-
-				} else if ( ( result = object_pattern.exec( line ) ) !== null ) {
-
-					// o object_name
-					// or
-					// g group_name
-
-					// WORKAROUND: https://bugs.chromium.org/p/v8/issues/detail?id=2869
-					// var name = result[ 0 ].substr( 1 ).trim();
-					var name = ( " " + result[ 0 ].substr( 1 ).trim() ).substr( 1 );
-
-					state.startObject( name );
-
-				} else if ( material_use_pattern.test( line ) ) {
-
-					// material
-
-					state.object.startMaterial( line.substring( 7 ).trim(), state.materialLibraries );
-
-				} else if ( material_library_pattern.test( line ) ) {
-
-					// mtl file
-
-					state.materialLibraries.push( line.substring( 7 ).trim() );
-
-				} else if ( lineFirstChar === 's' ) {
-
-					result = line.split( ' ' );
-
-					// smooth shading
-
-					// @todo Handle files that have varying smooth values for a set of faces inside one geometry,
-					// but does not define a usemtl for each face set.
-					// This should be detected and a dummy material created (later MultiMaterial and geometry groups).
-					// This requires some care to not create extra material on each smooth value for "normal" obj files.
-					// where explicit usemtl defines geometry groups.
-					// Example asset: examples/models/obj/cerberus/Cerberus.obj
-
-					/*
-					 * http://paulbourke.net/dataformats/obj/
-					 * or
-					 * http://www.cs.utah.edu/~boulos/cs3505/obj_spec.pdf
-					 *
-					 * From chapter "Grouping" Syntax explanation "s group_number":
-					 * "group_number is the smoothing group number. To turn off smoothing groups, use a value of 0 or off.
-					 * Polygonal elements use group numbers to put elements in different smoothing groups. For free-form
-					 * surfaces, smoothing groups are either turned on or off; there is no difference between values greater
-					 * than 0."
-					 */
-					if ( result.length > 1 ) {
-
-						var value = result[ 1 ].trim().toLowerCase();
-						state.object.smooth = ( value !== '0' && value !== 'off' );
-
-					} else {
-
-						// ZBrush can produce "s" lines #11707
-						state.object.smooth = true;
-
-					}
-					var material = state.object.currentMaterial();
-					if ( material ) material.smooth = state.object.smooth;
+					for ( i = start; i < stop; i ++ ) line += content[ i ];
 
 				} else {
 
-					// Handle null terminated files without exception
-					if ( line === '\0' ) continue;
 
-					throw new Error( 'THREE.OBJLoader: Unexpected line: "' + line + '"' );
+					for ( i = start; i < stop; i ++ ) line += String.fromCharCode( content[ i ] );
+
+				}
+				line = line.trim();
+
+			}
+			return line;
+		};
+
+		var bufferLength, length, i, lineDesignation;
+		lineDesignation = buffer [ 0 ];
+		switch ( lineDesignation ) {
+			case 'v':
+				this.vertices.push( parseFloat( buffer[ 1 ] ) );
+				this.vertices.push( parseFloat( buffer[ 2 ] ) );
+				this.vertices.push( parseFloat( buffer[ 3 ] ) );
+				if ( bufferPointer > 4 ) {
+
+					this.colors.push( parseFloat( buffer[ 4 ] ) );
+					this.colors.push( parseFloat( buffer[ 5 ] ) );
+					this.colors.push( parseFloat( buffer[ 6 ] ) );
+
+				}
+				break;
+
+			case 'vt':
+				this.uvs.push( parseFloat( buffer[ 1 ] ) );
+				this.uvs.push( parseFloat( buffer[ 2 ] ) );
+				break;
+
+			case 'vn':
+				this.normals.push( parseFloat( buffer[ 1 ] ) );
+				this.normals.push( parseFloat( buffer[ 2 ] ) );
+				this.normals.push( parseFloat( buffer[ 3 ] ) );
+				break;
+
+			case 'f':
+				bufferLength = bufferPointer - 1;
+
+				// "f vertex ..."
+				if ( slashesCount === 0 ) {
+
+					this.checkFaceType( 0 );
+					for ( i = 2, length = bufferLength; i < length; i ++ ) {
+
+						this.buildFace( buffer[ 1 ] );
+						this.buildFace( buffer[ i ] );
+						this.buildFace( buffer[ i + 1 ] );
+
+					}
+
+					// "f vertex/uv ..."
+				} else if ( bufferLength === slashesCount * 2 ) {
+
+					this.checkFaceType( 1 );
+					for ( i = 3, length = bufferLength - 2; i < length; i += 2 ) {
+
+						this.buildFace( buffer[ 1 ], buffer[ 2 ] );
+						this.buildFace( buffer[ i ], buffer[ i + 1 ] );
+						this.buildFace( buffer[ i + 2 ], buffer[ i + 3 ] );
+
+					}
+
+					// "f vertex/uv/normal ..."
+				} else if ( bufferLength * 2 === slashesCount * 3 ) {
+
+					this.checkFaceType( 2 );
+					for ( i = 4, length = bufferLength - 3; i < length; i += 3 ) {
+
+						this.buildFace( buffer[ 1 ], buffer[ 2 ], buffer[ 3 ] );
+						this.buildFace( buffer[ i ], buffer[ i + 1 ], buffer[ i + 2 ] );
+						this.buildFace( buffer[ i + 3 ], buffer[ i + 4 ], buffer[ i + 5 ] );
+
+					}
+
+					// "f vertex//normal ..."
+				} else {
+
+					this.checkFaceType( 3 );
+					for ( i = 3, length = bufferLength - 2; i < length; i += 2 ) {
+
+						this.buildFace( buffer[ 1 ], undefined, buffer[ 2 ] );
+						this.buildFace( buffer[ i ], undefined, buffer[ i + 1 ] );
+						this.buildFace( buffer[ i + 2 ], undefined, buffer[ i + 3 ] );
+
+					}
+
+				}
+				break;
+
+			case 'l':
+			case 'p':
+				bufferLength = bufferPointer - 1;
+				if ( bufferLength === slashesCount * 2 ) {
+
+					this.checkFaceType( 4 );
+					for ( i = 1, length = bufferLength + 1; i < length; i += 2 ) this.buildFace( buffer[ i ], buffer[ i + 1 ] );
+
+				} else {
+
+					this.checkFaceType( (lineDesignation === 'l') ? 5 : 6 );
+					for ( i = 1, length = bufferLength + 1; i < length; i ++ ) this.buildFace( buffer[ i ] );
+
+				}
+				break;
+
+			case 's':
+				this.pushSmoothingGroup( buffer[ 1 ] );
+				break;
+
+			case 'g':
+				// 'g' leads to creation of mesh if valid data (faces declaration was done before), otherwise only groupName gets set
+				this.processCompletedMesh();
+				this.rawMesh.groupName = reconstructString( this.contentRef, this.legacyMode, this.globalCounts.lineByte + 2, this.globalCounts.currentByte );
+				break;
+
+			case 'o':
+				// 'o' is pure meta-information and does not result in creation of new meshes
+				this.rawMesh.objectName = reconstructString( this.contentRef, this.legacyMode, this.globalCounts.lineByte + 2, this.globalCounts.currentByte );
+				break;
+
+			case 'mtllib':
+				this.rawMesh.mtllibName = reconstructString( this.contentRef, this.legacyMode, this.globalCounts.lineByte + 7, this.globalCounts.currentByte );
+				break;
+
+			case 'usemtl':
+				var mtlName = reconstructString( this.contentRef, this.legacyMode, this.globalCounts.lineByte + 7, this.globalCounts.currentByte );
+				if ( mtlName !== '' && this.rawMesh.activeMtlName !== mtlName ) {
+
+					this.rawMesh.activeMtlName = mtlName;
+					this.rawMesh.counts.mtlCount ++;
+					this.checkSubGroup();
+
+				}
+				break;
+
+			default:
+				break;
+		}
+	},
+
+	pushSmoothingGroup: function ( smoothingGroup ) {
+		var smoothingGroupInt = parseInt( smoothingGroup );
+		if ( isNaN( smoothingGroupInt ) ) {
+			smoothingGroupInt = smoothingGroup === "off" ? 0 : 1;
+		}
+
+		var smoothCheck = this.rawMesh.smoothingGroup.normalized;
+		this.rawMesh.smoothingGroup.normalized = this.rawMesh.smoothingGroup.splitMaterials ? smoothingGroupInt : (smoothingGroupInt === 0) ? 0 : 1;
+		this.rawMesh.smoothingGroup.real = smoothingGroupInt;
+
+		if ( smoothCheck !== smoothingGroupInt ) {
+
+			this.rawMesh.counts.smoothingGroupCount ++;
+			this.checkSubGroup();
+
+		}
+	},
+
+	/**
+	 * Expanded faceTypes include all four face types, both line types and the point type
+	 * faceType = 0: "f vertex ..."
+	 * faceType = 1: "f vertex/uv ..."
+	 * faceType = 2: "f vertex/uv/normal ..."
+	 * faceType = 3: "f vertex//normal ..."
+	 * faceType = 4: "l vertex/uv ..." or "l vertex ..."
+	 * faceType = 5: "l vertex ..."
+	 * faceType = 6: "p vertex ..."
+	 */
+	checkFaceType: function ( faceType ) {
+		if ( this.rawMesh.faceType !== faceType ) {
+
+			this.processCompletedMesh();
+			this.rawMesh.faceType = faceType;
+			this.checkSubGroup();
+
+		}
+	},
+
+	checkSubGroup: function () {
+		var index = this.rawMesh.activeMtlName + '|' + this.rawMesh.smoothingGroup.normalized;
+		this.rawMesh.subGroupInUse = this.rawMesh.subGroups[ index ];
+
+		if ( this.rawMesh.subGroupInUse === undefined || this.rawMesh.subGroupInUse === null ) {
+
+			this.rawMesh.subGroupInUse = {
+				index: index,
+				objectName: this.rawMesh.objectName,
+				groupName: this.rawMesh.groupName,
+				materialName: this.rawMesh.activeMtlName,
+				smoothingGroup: this.rawMesh.smoothingGroup.normalized,
+				vertices: [],
+				indexMappingsCount: 0,
+				indexMappings: [],
+				indices: [],
+				colors: [],
+				uvs: [],
+				normals: []
+			};
+			this.rawMesh.subGroups[ index ] = this.rawMesh.subGroupInUse;
+
+		}
+	},
+
+	buildFace: function ( faceIndexV, faceIndexU, faceIndexN ) {
+		var subGroupInUse = this.rawMesh.subGroupInUse;
+		var scope = this;
+		var updateSubGroupInUse = function () {
+
+			var faceIndexVi = parseInt( faceIndexV );
+			var indexPointerV = 3 * (faceIndexVi > 0 ? faceIndexVi - 1 : faceIndexVi + scope.vertices.length / 3);
+
+			var vertices = subGroupInUse.vertices;
+			vertices.push( scope.vertices[ indexPointerV ++ ] );
+			vertices.push( scope.vertices[ indexPointerV ++ ] );
+			vertices.push( scope.vertices[ indexPointerV ] );
+
+			var indexPointerC = scope.colors.length > 0 ? indexPointerV : null;
+			if ( indexPointerC !== null ) {
+
+				var colors = subGroupInUse.colors;
+				colors.push( scope.colors[ indexPointerC ++ ] );
+				colors.push( scope.colors[ indexPointerC ++ ] );
+				colors.push( scope.colors[ indexPointerC ] );
+
+			}
+			if ( faceIndexU ) {
+
+				var faceIndexUi = parseInt( faceIndexU );
+				var indexPointerU = 2 * (faceIndexUi > 0 ? faceIndexUi - 1 : faceIndexUi + scope.uvs.length / 2);
+				var uvs = subGroupInUse.uvs;
+				uvs.push( scope.uvs[ indexPointerU ++ ] );
+				uvs.push( scope.uvs[ indexPointerU ] );
+
+			}
+			if ( faceIndexN && ! scope.disregardNormals ) {
+
+				var faceIndexNi = parseInt( faceIndexN );
+				var indexPointerN = 3 * (faceIndexNi > 0 ? faceIndexNi - 1 : faceIndexNi + scope.normals.length / 3);
+				var normals = subGroupInUse.normals;
+				normals.push( scope.normals[ indexPointerN ++ ] );
+				normals.push( scope.normals[ indexPointerN ++ ] );
+				normals.push( scope.normals[ indexPointerN ] );
+
+			}
+		};
+
+		if ( this.useIndices ) {
+
+			if ( this.disregardNormals ) faceIndexN = undefined;
+			var mappingName = faceIndexV + ( faceIndexU ? '_' + faceIndexU : '_n' ) + ( faceIndexN ? '_' + faceIndexN : '_n' );
+			var indicesPointer = subGroupInUse.indexMappings[ mappingName ];
+			if ( indicesPointer === undefined || indicesPointer === null ) {
+
+				indicesPointer = this.rawMesh.subGroupInUse.vertices.length / 3;
+				updateSubGroupInUse();
+				subGroupInUse.indexMappings[ mappingName ] = indicesPointer;
+				subGroupInUse.indexMappingsCount++;
+
+			} else {
+
+				this.rawMesh.counts.doubleIndicesCount++;
+
+			}
+			subGroupInUse.indices.push( indicesPointer );
+
+		} else {
+
+			updateSubGroupInUse();
+
+		}
+		this.rawMesh.counts.faceCount ++;
+	},
+
+	createRawMeshReport: function ( inputObjectCount ) {
+		return 'Input Object number: ' + inputObjectCount +
+			'\n\tObject name: ' + this.rawMesh.objectName +
+			'\n\tGroup name: ' + this.rawMesh.groupName +
+			'\n\tMtllib name: ' + this.rawMesh.mtllibName +
+			'\n\tVertex count: ' + this.vertices.length / 3 +
+			'\n\tNormal count: ' + this.normals.length / 3 +
+			'\n\tUV count: ' + this.uvs.length / 2 +
+			'\n\tSmoothingGroup count: ' + this.rawMesh.counts.smoothingGroupCount +
+			'\n\tMaterial count: ' + this.rawMesh.counts.mtlCount +
+			'\n\tReal MeshOutputGroup count: ' + this.rawMesh.subGroups.length;
+	},
+
+	/**
+	 * Clear any empty subGroup and calculate absolute vertex, normal and uv counts
+	 */
+	finalizeRawMesh: function () {
+		var meshOutputGroupTemp = [];
+		var meshOutputGroup;
+		var absoluteVertexCount = 0;
+		var absoluteIndexMappingsCount = 0;
+		var absoluteIndexCount = 0;
+		var absoluteColorCount = 0;
+		var absoluteNormalCount = 0;
+		var absoluteUvCount = 0;
+		var indices;
+		for ( var name in this.rawMesh.subGroups ) {
+
+			meshOutputGroup = this.rawMesh.subGroups[ name ];
+			if ( meshOutputGroup.vertices.length > 0 ) {
+
+				indices = meshOutputGroup.indices;
+				if ( indices.length > 0 && absoluteIndexMappingsCount > 0 ) {
+
+					for ( var i in indices ) indices[ i ] = indices[ i ] + absoluteIndexMappingsCount;
+
+				}
+				meshOutputGroupTemp.push( meshOutputGroup );
+				absoluteVertexCount += meshOutputGroup.vertices.length;
+				absoluteIndexMappingsCount += meshOutputGroup.indexMappingsCount;
+				absoluteIndexCount += meshOutputGroup.indices.length;
+				absoluteColorCount += meshOutputGroup.colors.length;
+				absoluteUvCount += meshOutputGroup.uvs.length;
+				absoluteNormalCount += meshOutputGroup.normals.length;
+
+			}
+		}
+
+		// do not continue if no result
+		var result = null;
+		if ( meshOutputGroupTemp.length > 0 ) {
+
+			result = {
+				name: this.rawMesh.groupName !== '' ? this.rawMesh.groupName : this.rawMesh.objectName,
+				subGroups: meshOutputGroupTemp,
+				absoluteVertexCount: absoluteVertexCount,
+				absoluteIndexCount: absoluteIndexCount,
+				absoluteColorCount: absoluteColorCount,
+				absoluteNormalCount: absoluteNormalCount,
+				absoluteUvCount: absoluteUvCount,
+				faceCount: this.rawMesh.counts.faceCount,
+				doubleIndicesCount: this.rawMesh.counts.doubleIndicesCount
+			};
+
+		}
+		return result;
+	},
+
+	processCompletedMesh: function () {
+		var result = this.finalizeRawMesh();
+		var haveMesh = result !== null;
+		if ( haveMesh ) {
+
+			if ( this.colors.length > 0 && this.colors.length !== this.vertices.length ) {
+
+				throw 'Vertex Colors were detected, but vertex count and color count do not match!';
+
+			}
+			if ( this.logging.enabled && this.logging.debug ) console.debug( this.createRawMeshReport( this.inputObjectCount ) );
+			this.inputObjectCount ++;
+
+			this.buildMesh( result );
+			var progressBytesPercent = this.globalCounts.currentByte / this.globalCounts.totalBytes;
+			this.callbackProgress( 'Completed [o: ' + this.rawMesh.objectName + ' g:' + this.rawMesh.groupName + '] Total progress: ' + (progressBytesPercent * 100).toFixed( 2 ) + '%', progressBytesPercent );
+			this.resetRawMesh();
+
+		}
+		return haveMesh;
+	},
+
+	/**
+	 * SubGroups are transformed to too intermediate format that is forwarded to the MeshBuilder.
+	 * It is ensured that SubGroups only contain objects with vertices (no need to check).
+	 *
+	 * @param result
+	 */
+	buildMesh: function ( result ) {
+		var meshOutputGroups = result.subGroups;
+
+		var vertexFA = new Float32Array( result.absoluteVertexCount );
+		this.globalCounts.vertices += result.absoluteVertexCount / 3;
+		this.globalCounts.faces += result.faceCount;
+		this.globalCounts.doubleIndicesCount += result.doubleIndicesCount;
+		var indexUA = (result.absoluteIndexCount > 0) ? new Uint32Array( result.absoluteIndexCount ) : null;
+		var colorFA = (result.absoluteColorCount > 0) ? new Float32Array( result.absoluteColorCount ) : null;
+		var normalFA = (result.absoluteNormalCount > 0) ? new Float32Array( result.absoluteNormalCount ) : null;
+		var uvFA = (result.absoluteUvCount > 0) ? new Float32Array( result.absoluteUvCount ) : null;
+		var haveVertexColors = colorFA !== null;
+
+		var meshOutputGroup;
+		var materialNames = [];
+
+		var createMultiMaterial = (meshOutputGroups.length > 1);
+		var materialIndex = 0;
+		var materialIndexMapping = [];
+		var selectedMaterialIndex;
+		var materialGroup;
+		var materialGroups = [];
+
+		var vertexFAOffset = 0;
+		var indexUAOffset = 0;
+		var colorFAOffset = 0;
+		var normalFAOffset = 0;
+		var uvFAOffset = 0;
+		var materialGroupOffset = 0;
+		var materialGroupLength = 0;
+
+		var materialOrg, material, materialName, materialNameOrg;
+		// only one specific face type
+		for ( var oodIndex in meshOutputGroups ) {
+
+			if ( ! meshOutputGroups.hasOwnProperty( oodIndex ) ) continue;
+			meshOutputGroup = meshOutputGroups[ oodIndex ];
+
+			materialNameOrg = meshOutputGroup.materialName;
+			if ( this.rawMesh.faceType < 4 ) {
+
+				materialName = materialNameOrg + (haveVertexColors ? '_vertexColor' : '') + (meshOutputGroup.smoothingGroup === 0 ? '_flat' : '');
+
+
+			} else {
+
+				materialName = this.rawMesh.faceType === 6 ? 'defaultPointMaterial' : 'defaultLineMaterial';
+
+			}
+			materialOrg = this.materials[ materialNameOrg ];
+			material = this.materials[ materialName ];
+
+			// both original and derived names do not lead to an existing material => need to use a default material
+			if ( ( materialOrg === undefined || materialOrg === null ) && ( material === undefined || material === null ) ) {
+
+				var defaultMaterialName = haveVertexColors ? 'defaultVertexColorMaterial' : 'defaultMaterial';
+				materialOrg = this.materials[ defaultMaterialName ];
+				if ( this.logging.enabled ) console.warn( 'object_group "' + meshOutputGroup.objectName + '_' +
+					meshOutputGroup.groupName + '" was defined with unresolvable material "' +
+					materialNameOrg + '"! Assigning "' + defaultMaterialName + '".' );
+				materialNameOrg = defaultMaterialName;
+
+				// if names are identical then there is no need for later manipulation
+				if ( materialNameOrg === materialName ) {
+
+					material = materialOrg;
+					materialName = defaultMaterialName;
+
+				}
+
+			}
+			if ( material === undefined || material === null ) {
+
+				var materialCloneInstructions = {
+					materialNameOrg: materialNameOrg,
+					materialName: materialName,
+					materialProperties: {
+						vertexColors: haveVertexColors ? 2 : 0,
+						flatShading: meshOutputGroup.smoothingGroup === 0
+					}
+				};
+				var payload = {
+					cmd: 'materialData',
+					materials: {
+						materialCloneInstructions: materialCloneInstructions
+					}
+				};
+				this.callbackMeshBuilder( payload );
+
+				// only set materials if they don't exist, yet
+				var matCheck = this.materials[ materialName ];
+				if ( matCheck === undefined || matCheck === null ) {
+
+					this.materials[ materialName ] = materialCloneInstructions;
 
 				}
 
 			}
 
-			state.finalize();
+			if ( createMultiMaterial ) {
 
-			var container = new THREE.Group();
-			container.materialLibraries = [].concat( state.materialLibraries );
+				// re-use material if already used before. Reduces materials array size and eliminates duplicates
+				selectedMaterialIndex = materialIndexMapping[ materialName ];
+				if ( ! selectedMaterialIndex ) {
 
-			for ( var i = 0, l = state.objects.length; i < l; i ++ ) {
-
-				var object = state.objects[ i ];
-				var geometry = object.geometry;
-				var materials = object.materials;
-				var isLine = ( geometry.type === 'Line' );
-				var isPoints = ( geometry.type === 'Points' );
-				var hasVertexColors = false;
-
-				// Skip o/g line declarations that did not follow with any faces
-				if ( geometry.vertices.length === 0 ) continue;
-
-				var buffergeometry = new THREE.BufferGeometry();
-
-				buffergeometry.addAttribute( 'position', new THREE.Float32BufferAttribute( geometry.vertices, 3 ) );
-
-				if ( geometry.normals.length > 0 ) {
-
-					buffergeometry.addAttribute( 'normal', new THREE.Float32BufferAttribute( geometry.normals, 3 ) );
-
-				} else {
-
-					buffergeometry.computeVertexNormals();
+					selectedMaterialIndex = materialIndex;
+					materialIndexMapping[ materialName ] = materialIndex;
+					materialNames.push( materialName );
+					materialIndex ++;
 
 				}
+				materialGroupLength = this.useIndices ? meshOutputGroup.indices.length : meshOutputGroup.vertices.length / 3;
+				materialGroup = {
+					start: materialGroupOffset,
+					count: materialGroupLength,
+					index: selectedMaterialIndex
+				};
+				materialGroups.push( materialGroup );
+				materialGroupOffset += materialGroupLength;
 
-				if ( geometry.colors.length > 0 ) {
+			} else {
 
-					hasVertexColors = true;
-					buffergeometry.addAttribute( 'color', new THREE.Float32BufferAttribute( geometry.colors, 3 ) );
-
-				}
-
-				if ( geometry.uvs.length > 0 ) {
-
-					buffergeometry.addAttribute( 'uv', new THREE.Float32BufferAttribute( geometry.uvs, 2 ) );
-
-				}
-
-				// Create materials
-
-				var createdMaterials = [];
-
-				for ( var mi = 0, miLen = materials.length; mi < miLen; mi ++ ) {
-
-					var sourceMaterial = materials[ mi ];
-					var material = undefined;
-
-					if ( this.materials !== null ) {
-
-						material = this.materials.create( sourceMaterial.name );
-
-						// mtl etc. loaders probably can't create line materials correctly, copy properties to a line material.
-						if ( isLine && material && ! ( material instanceof THREE.LineBasicMaterial ) ) {
-
-							var materialLine = new THREE.LineBasicMaterial();
-							materialLine.copy( material );
-							materialLine.lights = false; // TOFIX
-							material = materialLine;
-
-						} else if ( isPoints && material && ! ( material instanceof THREE.PointsMaterial ) ) {
-
-							var materialPoints = new THREE.PointsMaterial( { size: 10, sizeAttenuation: false } );
-							materialLine.copy( material );
-							material = materialPoints;
-
-						}
-
-					}
-
-					if ( ! material ) {
-
-						if ( isLine ) {
-
-							material = new THREE.LineBasicMaterial();
-
-						} else if ( isPoints ) {
-
-							material = new THREE.PointsMaterial( { size: 1, sizeAttenuation: false } );
-
-						} else {
-
-							material = new THREE.MeshPhongMaterial();
-
-						}
-
-						material.name = sourceMaterial.name;
-
-					}
-
-					material.flatShading = sourceMaterial.smooth ? false : true;
-					material.vertexColors = hasVertexColors ? THREE.VertexColors : THREE.NoColors;
-
-					createdMaterials.push( material );
-
-				}
-
-				// Create mesh
-
-				var mesh;
-
-				if ( createdMaterials.length > 1 ) {
-
-					for ( var mi = 0, miLen = materials.length; mi < miLen; mi ++ ) {
-
-						var sourceMaterial = materials[ mi ];
-						buffergeometry.addGroup( sourceMaterial.groupStart, sourceMaterial.groupCount, mi );
-
-					}
-
-					if ( isLine ) {
-
-						mesh = new THREE.LineSegments( buffergeometry, createdMaterials );
-
-					} else if ( isPoints ) {
-
-						mesh = new THREE.Points( buffergeometry, createdMaterials );
-
-					} else {
-
-						mesh = new THREE.Mesh( buffergeometry, createdMaterials );
-
-					}
-
-				} else {
-
-					if ( isLine ) {
-
-						mesh = new THREE.LineSegments( buffergeometry, createdMaterials[ 0 ] );
-
-					} else if ( isPoints ) {
-
-						mesh = new THREE.Points( buffergeometry, createdMaterials[ 0 ] );
-
-					} else {
-
-						mesh = new THREE.Mesh( buffergeometry, createdMaterials[ 0 ] );
-
-					}
-
-				}
-
-				mesh.name = object.name;
-
-				container.add( mesh );
+				materialNames.push( materialName );
 
 			}
 
-			console.timeEnd( 'OBJLoader' );
+			vertexFA.set( meshOutputGroup.vertices, vertexFAOffset );
+			vertexFAOffset += meshOutputGroup.vertices.length;
 
-			return container;
+			if ( indexUA ) {
+
+				indexUA.set( meshOutputGroup.indices, indexUAOffset );
+				indexUAOffset += meshOutputGroup.indices.length;
+
+			}
+
+			if ( colorFA ) {
+
+				colorFA.set( meshOutputGroup.colors, colorFAOffset );
+				colorFAOffset += meshOutputGroup.colors.length;
+
+			}
+
+			if ( normalFA ) {
+
+				normalFA.set( meshOutputGroup.normals, normalFAOffset );
+				normalFAOffset += meshOutputGroup.normals.length;
+
+			}
+			if ( uvFA ) {
+
+				uvFA.set( meshOutputGroup.uvs, uvFAOffset );
+				uvFAOffset += meshOutputGroup.uvs.length;
+
+			}
+
+			if ( this.logging.enabled && this.logging.debug ) {
+
+				var materialIndexLine = ( selectedMaterialIndex === undefined || selectedMaterialIndex === null ) ? '' : '\n\t\tmaterialIndex: ' + selectedMaterialIndex;
+				var createdReport = '\tOutput Object no.: ' + this.outputObjectCount +
+					'\n\t\tgroupName: ' + meshOutputGroup.groupName +
+					'\n\t\tIndex: ' + meshOutputGroup.index +
+					'\n\t\tfaceType: ' + this.rawMesh.faceType +
+					'\n\t\tmaterialName: ' + meshOutputGroup.materialName +
+					'\n\t\tsmoothingGroup: ' + meshOutputGroup.smoothingGroup +
+					materialIndexLine +
+					'\n\t\tobjectName: ' + meshOutputGroup.objectName +
+					'\n\t\t#vertices: ' + meshOutputGroup.vertices.length / 3 +
+					'\n\t\t#indices: ' + meshOutputGroup.indices.length +
+					'\n\t\t#colors: ' + meshOutputGroup.colors.length / 3 +
+					'\n\t\t#uvs: ' + meshOutputGroup.uvs.length / 2 +
+					'\n\t\t#normals: ' + meshOutputGroup.normals.length / 3;
+				console.debug( createdReport );
+
+			}
+
+		}
+		this.outputObjectCount ++;
+		this.callbackMeshBuilder(
+			{
+				cmd: 'meshData',
+				progress: {
+					numericalValue: this.globalCounts.currentByte / this.globalCounts.totalBytes
+				},
+				params: {
+					meshName: result.name
+				},
+				materials: {
+					multiMaterial: createMultiMaterial,
+					materialNames: materialNames,
+					materialGroups: materialGroups
+				},
+				buffers: {
+					vertices: vertexFA,
+					indices: indexUA,
+					colors: colorFA,
+					normals: normalFA,
+					uvs: uvFA
+				},
+				// 0: mesh, 1: line, 2: point
+				geometryType: this.rawMesh.faceType < 4 ? 0 : (this.rawMesh.faceType === 6) ? 2 : 1
+			},
+			[ vertexFA.buffer ],
+			indexUA !== null ?  [ indexUA.buffer ] : null,
+			colorFA !== null ? [ colorFA.buffer ] : null,
+			normalFA !== null ? [ normalFA.buffer ] : null,
+			uvFA !== null ? [ uvFA.buffer ] : null
+		);
+	},
+
+	finalizeParsing: function () {
+		if ( this.logging.enabled ) console.info( 'Global output object count: ' + this.outputObjectCount );
+		if ( this.processCompletedMesh() && this.logging.enabled ) {
+
+			var parserFinalReport = 'Overall counts: ' +
+				'\n\tVertices: ' + this.globalCounts.vertices +
+				'\n\tFaces: ' + this.globalCounts.faces +
+				'\n\tMultiple definitions: ' + this.globalCounts.doubleIndicesCount;
+			console.info( parserFinalReport );
+
+		}
+	}
+};
+
+
+THREE.OBJLoader.MeshBuilder = function() {
+	console.info( 'Using THREE.OBJLoader.MeshBuilder version: ' + THREE.OBJLoader.LOADER_MESH_BUILDER_VERSION );
+
+	this.validator = THREE.OBJLoader.Validator;
+
+	this.logging = {
+		enabled: true,
+		debug: false
+	};
+
+	this.callbacks = {
+		onProgress: null,
+		onMeshAlter: null,
+		onLoadMaterials: null
+	};
+	this.materials = [];
+};
+THREE.OBJLoader.LOADER_MESH_BUILDER_VERSION = '2.0.0-dev';
+
+
+THREE.OBJLoader.MeshBuilder.prototype = {
+
+	constructor: THREE.OBJLoader.MeshBuilder,
+
+		/**
+		 * Enable or disable logging in general (except warn and error), plus enable or disable debug logging.
+		 * @memberOf THREE.OBJLoader.MeshBuilder
+		 *
+		 * @param {boolean} enabled True or false.
+		 * @param {boolean} debug True or false.
+		 */
+	setLogging:	function ( enabled, debug ) {
+		this.logging.enabled = enabled === true;
+		this.logging.debug = debug === true;
+	},
+
+	/**
+	 * Initializes the MeshBuilder (currently only default material initialisation).
+	 * @memberOf THREE.OBJLoader.MeshBuilder
+	 *
+	 */
+	init: function () {
+		var defaultMaterial = new THREE.MeshStandardMaterial( { color: 0xDCF1FF } );
+		defaultMaterial.name = 'defaultMaterial';
+
+		var defaultVertexColorMaterial = new THREE.MeshStandardMaterial( { color: 0xDCF1FF } );
+		defaultVertexColorMaterial.name = 'defaultVertexColorMaterial';
+		defaultVertexColorMaterial.vertexColors = THREE.VertexColors;
+
+		var defaultLineMaterial = new THREE.LineBasicMaterial();
+		defaultLineMaterial.name = 'defaultLineMaterial';
+
+		var defaultPointMaterial = new THREE.PointsMaterial( { size: 1 } );
+		defaultPointMaterial.name = 'defaultPointMaterial';
+
+		var runtimeMaterials = {};
+		runtimeMaterials[ defaultMaterial.name ] = defaultMaterial;
+		runtimeMaterials[ defaultVertexColorMaterial.name ] = defaultVertexColorMaterial;
+		runtimeMaterials[ defaultLineMaterial.name ] = defaultLineMaterial;
+		runtimeMaterials[ defaultPointMaterial.name ] = defaultPointMaterial;
+
+		this.updateMaterials(
+			{
+				cmd: 'materialData',
+				materials: {
+					materialCloneInstructions: null,
+					serializedMaterials: null,
+					runtimeMaterials: runtimeMaterials
+				}
+			}
+		);
+	},
+
+	/**
+	 * Set materials loaded by any supplier of an Array of {@link THREE.Material}.
+	 * @memberOf THREE.OBJLoader.MeshBuilder
+	 *
+	 * @param {THREE.Material[]} materials Array of {@link THREE.Material}
+	 */
+	setMaterials: function ( materials ) {
+		var payload = {
+			cmd: 'materialData',
+			materials: {
+				materialCloneInstructions: null,
+				serializedMaterials: null,
+				runtimeMaterials: this.validator.isValid( this.callbacks.onLoadMaterials ) ? this.callbacks.onLoadMaterials( materials ) : materials
+			}
+		};
+		this.updateMaterials( payload );
+	},
+
+	_setCallbacks: function ( onProgress, onMeshAlter, onLoadMaterials ) {
+		if ( this.validator.isValid( onProgress ) ) this.callbacks.onProgress = onProgress;
+		if ( this.validator.isValid( onMeshAlter ) ) this.callbacks.onMeshAlter = onMeshAlter;
+		if ( this.validator.isValid( onLoadMaterials ) ) this.callbacks.onLoadMaterials = onLoadMaterials;
+	},
+
+	/**
+	 * Delegates processing of the payload (mesh building or material update) to the corresponding functions (BW-compatibility).
+	 * @memberOf THREE.OBJLoader.MeshBuilder
+	 *
+	 * @param {Object} payload Raw Mesh or Material descriptions.
+	 * @returns {THREE.Mesh[]} mesh Array of {@link THREE.Mesh} or null in case of material update
+	 */
+	processPayload: function ( payload ) {
+		if ( payload.cmd === 'meshData' ) {
+
+			return this.buildMeshes( payload );
+
+		} else if ( payload.cmd === 'materialData' ) {
+
+			this.updateMaterials( payload );
+			return null;
+
+		}
+	},
+
+	/**
+	 * Builds one or multiple meshes from the data described in the payload (buffers, params, material info).
+	 * @memberOf THREE.OBJLoader.MeshBuilder
+	 *
+	 * @param {Object} meshPayload Raw mesh description (buffers, params, materials) used to build one to many meshes.
+	 * @returns {THREE.Mesh[]} mesh Array of {@link THREE.Mesh}
+	 */
+	buildMeshes: function ( meshPayload ) {
+		var meshName = meshPayload.params.meshName;
+
+		var bufferGeometry = new THREE.BufferGeometry();
+		bufferGeometry.addAttribute( 'position', new THREE.BufferAttribute( new Float32Array( meshPayload.buffers.vertices ), 3 ) );
+		if ( this.validator.isValid( meshPayload.buffers.indices ) ) {
+
+			bufferGeometry.setIndex( new THREE.BufferAttribute( new Uint32Array( meshPayload.buffers.indices ), 1 ) );
+
+		}
+		var haveVertexColors = this.validator.isValid( meshPayload.buffers.colors );
+		if ( haveVertexColors ) {
+
+			bufferGeometry.addAttribute( 'color', new THREE.BufferAttribute( new Float32Array( meshPayload.buffers.colors ), 3 ) );
+
+		}
+		if ( this.validator.isValid( meshPayload.buffers.normals ) ) {
+
+			bufferGeometry.addAttribute( 'normal', new THREE.BufferAttribute( new Float32Array( meshPayload.buffers.normals ), 3 ) );
+
+		} else {
+
+			bufferGeometry.computeVertexNormals();
+
+		}
+		if ( this.validator.isValid( meshPayload.buffers.uvs ) ) {
+
+			bufferGeometry.addAttribute( 'uv', new THREE.BufferAttribute( new Float32Array( meshPayload.buffers.uvs ), 2 ) );
 
 		}
 
-	};
+		var material, materialName, key;
+		var materialNames = meshPayload.materials.materialNames;
+		var createMultiMaterial = meshPayload.materials.multiMaterial;
+		var multiMaterials = [];
+		for ( key in materialNames ) {
 
-	return OBJLoader;
+			materialName = materialNames[ key ];
+			material = this.materials[ materialName ];
+			if ( createMultiMaterial ) multiMaterials.push( material );
 
-} )();
+		}
+		if ( createMultiMaterial ) {
+
+			material = multiMaterials;
+			var materialGroups = meshPayload.materials.materialGroups;
+			var materialGroup;
+			for ( key in materialGroups ) {
+
+				materialGroup = materialGroups[ key ];
+				bufferGeometry.addGroup( materialGroup.start, materialGroup.count, materialGroup.index );
+
+			}
+
+		}
+
+		var meshes = [];
+		var mesh;
+		var callbackOnMeshAlter = this.callbacks.onMeshAlter;
+		var callbackOnMeshAlterResult;
+		var useOrgMesh = true;
+		var geometryType = this.validator.verifyInput( meshPayload.geometryType, 0 );
+		if ( this.validator.isValid( callbackOnMeshAlter ) ) {
+
+			callbackOnMeshAlterResult = callbackOnMeshAlter(
+				{
+					detail: {
+						meshName: meshName,
+						bufferGeometry: bufferGeometry,
+						material: material,
+						geometryType: geometryType
+					}
+				}
+			);
+			if ( this.validator.isValid( callbackOnMeshAlterResult ) ) {
+
+				if ( ! callbackOnMeshAlterResult.isDisregardMesh() && callbackOnMeshAlterResult.providesAlteredMeshes() ) {
+
+					for ( var i in callbackOnMeshAlterResult.meshes ) {
+
+						meshes.push( callbackOnMeshAlterResult.meshes[ i ] );
+
+					}
+
+				}
+				useOrgMesh = false;
+
+			}
+
+		}
+		if ( useOrgMesh ) {
+
+			if ( meshPayload.computeBoundingSphere ) bufferGeometry.computeBoundingSphere();
+			if ( geometryType === 0 ) {
+
+				mesh = new THREE.Mesh( bufferGeometry, material );
+
+			} else if ( geometryType === 1 ) {
+
+				mesh = new THREE.LineSegments( bufferGeometry, material );
+
+			} else {
+
+				mesh = new THREE.Points( bufferGeometry, material );
+
+			}
+			mesh.name = meshName;
+			meshes.push( mesh );
+
+		}
+
+		var progressMessage;
+		if ( this.validator.isValid( meshes ) && meshes.length > 0 ) {
+
+			var meshNames = [];
+			for ( var i in meshes ) {
+
+				mesh = meshes[ i ];
+				meshNames[ i ] = mesh.name;
+
+			}
+			progressMessage = 'Adding mesh(es) (' + meshNames.length + ': ' + meshNames + ') from input mesh: ' + meshName;
+			progressMessage += ' (' + (meshPayload.progress.numericalValue * 100).toFixed( 2 ) + '%)';
+
+		} else {
+
+			progressMessage = 'Not adding mesh: ' + meshName;
+			progressMessage += ' (' + (meshPayload.progress.numericalValue * 100).toFixed( 2 ) + '%)';
+
+		}
+		var callbackOnProgress = this.callbacks.onProgress;
+		if ( this.validator.isValid( callbackOnProgress ) ) {
+
+			var event = new CustomEvent( 'MeshBuilderEvent', {
+				detail: {
+					type: 'progress',
+					modelName: meshPayload.params.meshName,
+					text: progressMessage,
+					numericalValue: meshPayload.progress.numericalValue
+				}
+			} );
+			callbackOnProgress( event );
+
+		}
+
+		return meshes;
+	},
+
+	/**
+	 * Updates the materials with contained material objects (sync) or from alteration instructions (async).
+	 * @memberOf THREE.OBJLoader.MeshBuilder
+	 *
+	 * @param {Object} materialPayload Material update instructions
+	 */
+	updateMaterials: function ( materialPayload ) {
+		var material, materialName;
+		var materialCloneInstructions = materialPayload.materials.materialCloneInstructions;
+		if ( this.validator.isValid( materialCloneInstructions ) ) {
+
+			var materialNameOrg = materialCloneInstructions.materialNameOrg;
+			var materialOrg = this.materials[ materialNameOrg ];
+
+			if ( this.validator.isValid( materialNameOrg ) ) {
+
+				material = materialOrg.clone();
+
+				materialName = materialCloneInstructions.materialName;
+				material.name = materialName;
+
+				var materialProperties = materialCloneInstructions.materialProperties;
+				for ( var key in materialProperties ) {
+
+					if ( material.hasOwnProperty( key ) && materialProperties.hasOwnProperty( key ) ) material[ key ] = materialProperties[ key ];
+
+				}
+				this.materials[ materialName ] = material;
+
+			} else {
+
+				console.warn( 'Requested material "' + materialNameOrg + '" is not available!' );
+
+			}
+		}
+
+		var materials = materialPayload.materials.serializedMaterials;
+		if ( this.validator.isValid( materials ) && Object.keys( materials ).length > 0 ) {
+
+			var loader = new THREE.MaterialLoader();
+			var materialJson;
+			for ( materialName in materials ) {
+
+				materialJson = materials[ materialName ];
+				if ( this.validator.isValid( materialJson ) ) {
+
+					material = loader.parse( materialJson );
+					if ( this.logging.enabled ) console.info( 'De-serialized material with name "' + materialName + '" will be added.' );
+					this.materials[ materialName ] = material;
+				}
+
+			}
+
+		}
+
+		materials = materialPayload.materials.runtimeMaterials;
+		if ( this.validator.isValid( materials ) && Object.keys( materials ).length > 0 ) {
+
+			for ( materialName in materials ) {
+
+				material = materials[ materialName ];
+				if ( this.logging.enabled ) console.info( 'Material with name "' + materialName + '" will be added.' );
+				this.materials[ materialName ] = material;
+
+			}
+
+		}
+	},
+
+	/**
+	 * Returns the mapping object of material name and corresponding jsonified material.
+	 * @memberOf THREE.OBJLoader.MeshBuilder
+	 *
+	 * @returns {Object} Map of Materials in JSON representation
+	 */
+	getMaterialsJSON: function () {
+		var materialsJSON = {};
+		var material;
+		for ( var materialName in this.materials ) {
+
+			material = this.materials[ materialName ];
+			materialsJSON[ materialName ] = material.toJSON();
+		}
+
+		return materialsJSON;
+	},
+
+	/**
+	 * Returns the mapping object of material name and corresponding material.
+	 * @memberOf THREE.OBJLoader.MeshBuilder
+	 *
+	 * @returns {Object} Map of {@link THREE.Material}
+	 */
+	getMaterials: function () {
+		return this.materials;
+	}
+
+};
+
