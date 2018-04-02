@@ -38,31 +38,6 @@ THREE.OBJLoader.prototype = Object.create( THREE.OBJLoader.prototype );
 THREE.OBJLoader.prototype.constructor = THREE.OBJLoader;
 THREE.OBJLoader.OBJLOADER2_VERSION = '3.0.0-dev';
 
-
-THREE.OBJLoader.Validator = {
-
-	/**
-	 * If given input is null or undefined, false is returned otherwise true.
-	 *
-	 * @param input Can be anything
-	 * @returns {boolean}
-	 */
-	isValid: function( input ) {
-		return ( input !== null && input !== undefined );
-	},
-
-	/**
-	 * If given input is null or undefined, the defaultValue is returned otherwise the given input.
-	 *
-	 * @param input Can be anything
-	 * @param defaultValue Can be anything
-	 * @returns {*}
-	 */
-	verifyInput: function( input, defaultValue ) {
-		return ( input === null || input === undefined ) ? defaultValue : input;
-	}
-};
-
 /**
  * Use this class to load OBJ data from files or to parse OBJ data from an arraybuffer
  * @class
@@ -127,6 +102,10 @@ THREE.OBJLoader.prototype = {
 		if ( materialsOrmaterialCreator instanceof THREE.MTLLoader.MaterialCreator ) {
 
 			materials = this._handleMtlMaterials( materialsOrmaterialCreator );
+
+		} else if ( Array.isArray( materialsOrmaterialCreator ) ) {
+
+			materials = materialsOrmaterialCreator
 
 		}
 		this.meshBuilder.setMaterials( materials );
@@ -299,7 +278,7 @@ THREE.OBJLoader.prototype = {
 
 		}
 		if ( this.logging.enabled ) console.time( 'OBJLoader parse: ' + this.modelName );
-		this.meshBuilder.init();
+		this.meshBuilder.init( this.loaderRootNode );
 
 		var parser = new THREE.OBJLoader.Parser();
 		parser.setLogging( this.logging.enabled, this.logging.debug );
@@ -344,12 +323,13 @@ THREE.OBJLoader.prototype = {
 		return this.loaderRootNode;
 	},
 
-	buildWorkerCode: function ( funcBuildObject, funcBuildSingleton ) {
+	buildWorkerCode: function ( codeSerializer ) {
 		var workerCode = '';
 		workerCode += '/**\n';
 		workerCode += '  * This code was constructed by THREE.OBJLoader.buildWorkerCode.\n';
 		workerCode += '  */\n\n';
-		workerCode += funcBuildSingleton( 'THREE.OBJLoader.Parser', THREE.OBJLoader.Parser );
+		workerCode += 'THREE = { OBJLoader: {} };\n\n';
+		workerCode += codeSerializer.serializeClass( 'THREE.OBJLoader.Parser', THREE.OBJLoader.Parser );
 
 		return workerCode;
 	},
@@ -380,7 +360,7 @@ THREE.OBJLoader.prototype = {
 			if ( scope.validator.isValid( materialCreator ) ) {
 
 				materialCreator.preload();
-				materials = this._handleMtlMaterials( materialCreator );
+				materials = scope._handleMtlMaterials( materialCreator );
 			}
 
 			if ( scope.validator.isValid( resource ) && scope.logging.enabled ) console.timeEnd( 'Loading MTL: ' + resource.name );
@@ -437,6 +417,29 @@ THREE.OBJLoader.prototype = {
 	}
 };
 
+THREE.OBJLoader.Validator = {
+
+	/**
+	 * If given input is null or undefined, false is returned otherwise true.
+	 *
+	 * @param input Can be anything
+	 * @returns {boolean}
+	 */
+	isValid: function( input ) {
+		return ( input !== null && input !== undefined );
+	},
+
+	/**
+	 * If given input is null or undefined, the defaultValue is returned otherwise the given input.
+	 *
+	 * @param input Can be anything
+	 * @param defaultValue Can be anything
+	 * @returns {*}
+	 */
+	verifyInput: function( input, defaultValue ) {
+		return ( input === null || input === undefined ) ? defaultValue : input;
+	}
+};
 
 /**
  * A resource description used by {@link THREE.OBJLoader}.
@@ -1371,7 +1374,9 @@ THREE.OBJLoader.MeshBuilder.prototype = {
 	 * @memberOf THREE.OBJLoader.MeshBuilder
 	 *
 	 */
-	init: function () {
+	init: function ( loaderRootNode ) {
+		this.loaderRootNode = loaderRootNode;
+
 		var defaultMaterial = new THREE.MeshStandardMaterial( { color: 0xDCF1FF } );
 		defaultMaterial.name = 'defaultMaterial';
 
@@ -1599,7 +1604,17 @@ THREE.OBJLoader.MeshBuilder.prototype = {
 
 		}
 
-		return meshes;
+		this.addToLoaderRootNode( meshes );
+	},
+
+	addToLoaderRootNode: function( meshes ) {
+		var mesh;
+		for ( var i in meshes ) {
+
+			mesh = meshes[ i ];
+			this.loaderRootNode.add( mesh );
+
+		}
 	},
 
 	/**
