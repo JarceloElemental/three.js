@@ -38,7 +38,7 @@
 
 			const workerExecFunction = function ( id, config ) {
 
-				let bufferGeometry = new THREE.SphereBufferGeometry( 35, 64, 64 );
+				let bufferGeometry = new THREE.SphereBufferGeometry( 30, 64, 64 );
 
 				let vertexBA = bufferGeometry.getAttribute( 'position' ) ;
 				let indexBA = bufferGeometry.getIndex();
@@ -78,6 +78,7 @@
 					normalFA !== null ? [ normalFA.buffer ] : null,
 					uvFA !== null ? [ uvFA.buffer ] : null
 				);
+
 			};
 
 			const workerManageCom = function ( message ) {
@@ -103,7 +104,7 @@
 
 					this.scene = null;
 					this.cameraDefaults = {
-						posCamera: new THREE.Vector3( 0.0, 175.0, 500.0 ),
+						posCamera: new THREE.Vector3( 1000.0, 1000.0, 1000.0 ),
 						posCameraTarget: new THREE.Vector3( 0, 0, 0 ),
 						near: 0.1,
 						far: 10000,
@@ -116,6 +117,22 @@
 
 					this.taskManager = new TaskManager( 8 );
 					this.meshReceiver = new MeshReceiver( new MaterialHandler() );
+
+					this.meshCount = 0;
+					this.lastDeletedMesh = 0;
+					this.removeCount = 50;
+					this.numberOfMeshesToKeep = 750;
+
+					// overall executions: maxPerLoop * loopCount
+					this.maxPerLoop = 1000;
+					// number of Promises kept in one go
+					this.loopCount = 1000;
+
+					// sphere positions
+					this.baseFactor = 500;
+					this.baseVectorX = new THREE.Vector3( 1, 0, 0 );
+					this.baseVectorY = new THREE.Vector3( 0, 1, 0 );
+					this.baseVectorZ = new THREE.Vector3( 0, 0, 1 );
 				}
 
 				initGL () {
@@ -144,8 +161,9 @@
 					this.scene.add( directionalLight2 );
 					this.scene.add( ambientLight );
 
-					let helper = new THREE.GridHelper( 1200, 60, 0xFF4444, 0x404040 );
+					let helper = new THREE.GridHelper( 1000, 30, 0xFF4444, 0x404040 );
 					this.scene.add( helper );
+
 				}
 
 				async initContent () {
@@ -153,17 +171,23 @@
 					let available = await this.taskManager.initType( "tmProto", { param1: 'param1value' } );
 
 					console.time( 'start' );
-					let last;
-					for ( let i = 0; i < 25000; i++ ) {
+					let executions = [];
 
-						last = this.taskManager.addTask( "tmProto", 1, { count: i } )
-							.then( data => this.processMessage( data, i ) ).catch( e => console.error( e ) );
+					for ( let j = 0; j < this.loopCount; j++ ) {
+						console.time( 'Completed ' + ( this.maxPerLoop + j * this.maxPerLoop ) );
+						for ( let localCount, i = 0; i < this.maxPerLoop; i ++ ) {
+
+							localCount = j * this.maxPerLoop + i;
+							executions.push( this.taskManager.addTask( "tmProto", 1, { count: localCount } ).then( data => this.processMessage( data, localCount ) ).catch( e => console.error( e ) ) );
+
+						}
+						await Promise.all( executions );
+						executions = [];
+						console.timeEnd( 'Completed ' + ( this.maxPerLoop + j * this.maxPerLoop ) );
 
 					}
-					await last;
 					this.taskManager.dispose();
 					console.timeEnd( 'start' );
-					alert( 'worker execution complete' );
 
 				}
 
@@ -175,37 +199,52 @@
 
 						case 'exec':
 							let meshes = this.meshReceiver.buildMeshes( payload );
+							this.addMesh( meshes[ 0 ] );
 
-							meshes.forEach( mesh => {
-								let x = Math.ceil( ( Math.random() - 0.5 ) * 750);
-								let y = Math.ceil( ( Math.random() - 0.5 ) * 750);
-								let z = Math.ceil( ( Math.random() - 0.5 ) * 750);
-								mesh.position.set( x, y, z );
-								mesh.material = new THREE.MeshNormalMaterial();
-								this.scene.add( mesh )
-							} );
+							this.cleanMeshes();
 							break;
 
 						default:
 							console.error( payload.id + ': Received unknown command: ' + payload.cmd );
 							break;
 					}
-					let offset = count - 500;
-					if ( count % 100 === 0 && offset >= 0 ) {
+				}
 
-						let deleteRange = offset + 100;
-						console.log( 'Removing: ' + offset + ' to ' + deleteRange );
-						for ( let i = offset; i < deleteRange; i++ ) {
+				addMesh( mesh ) {
 
-							let toBeRemoved = this.scene.getObjectByName( 'sphere' + i );
-							toBeRemoved.geometry.dispose();
-							toBeRemoved.material.dispose();
-							this.scene.remove( toBeRemoved );
+					let pos = new THREE.Vector3( this.baseFactor * Math.random(), this.baseFactor * Math.random(), this.baseFactor * Math.random() );
+					pos.applyAxisAngle( this.baseVectorX, 2 * Math.PI * Math.random() );
+					pos.applyAxisAngle( this.baseVectorY, 2 * Math.PI * Math.random() );
+					pos.applyAxisAngle( this.baseVectorZ, 2 * Math.PI * Math.random() );
 
+					mesh.position.set( pos.x, pos.y, pos.z );
+					mesh.material = new THREE.MeshNormalMaterial();
+					this.scene.add( mesh );
+					this.meshCount ++;
+
+				}
+
+				cleanMeshes() {
+
+					if ( this.meshCount > this.numberOfMeshesToKeep && this.meshCount - this.lastDeletedMesh >= this.numberOfMeshesToKeep ) {
+
+						let deleteRange = this.lastDeletedMesh + this.removeCount;
+						for ( let toBeRemoved, i = this.lastDeletedMesh; i < deleteRange; i++ ) {
+
+							toBeRemoved = this.scene.getObjectByName( 'sphere' + i );
+							if ( toBeRemoved ) {
+
+								toBeRemoved.geometry.dispose();
+								toBeRemoved.material.dispose();
+								this.scene.remove( toBeRemoved );
+
+							}
 
 						}
+						this.lastDeletedMesh = deleteRange;
 
 					}
+
 				}
 
 				resizeDisplayGL () {
@@ -238,7 +277,9 @@
 					if ( !this.renderer.autoClear ) this.renderer.clear();
 					this.controls.update();
 					this.renderer.render( this.scene, this.camera );
+
 				}
+
 			}
 
 			let app = new TaskManagerPrototypeExample( document.getElementById( 'example' ) );
