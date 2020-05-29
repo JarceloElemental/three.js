@@ -120,7 +120,7 @@ MeshReceiver.prototype = {
 		}
 
 		let meshName = 'none';
-		if ( meshPayload.params.meshName ) meshName = meshPayload.params.meshName;
+		if ( meshPayload.meshName ) meshName = meshPayload.meshName;
 
 		let material;
 		let multiMaterials = [];
@@ -139,7 +139,7 @@ MeshReceiver.prototype = {
 			for ( let key in materialNames ) {
 
 				let materialName = materialNames[ key ];
-				multiMaterials.push( this.materialHandler.getMaterial( materialName ) );
+				multiMaterials.push( this.materialHandler.getMaterial( materialName ).clone() );
 
 			}
 			material = multiMaterials;
@@ -154,7 +154,7 @@ MeshReceiver.prototype = {
 		else {
 
 			let materialName = materialNames[ 0 ];
-			if ( materialName ) material = this.materialHandler.getMaterial( materialName );
+			if ( materialName ) material = this.materialHandler.getMaterial( materialName ).clone();
 
 		}
 
@@ -162,7 +162,7 @@ MeshReceiver.prototype = {
 		let mesh;
 		let callbackOnMeshAlterResult;
 		let useOrgMesh = true;
-		const geometryType = meshPayload.geometryType ? meshPayload.geometryType : 0;
+		const geometryType = meshPayload.params.geometryType ? meshPayload.params.geometryType : 0;
 
 		if ( this.callbacks.onMeshAlter ) {
 

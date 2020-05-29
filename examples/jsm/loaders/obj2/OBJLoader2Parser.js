@@ -366,7 +366,7 @@ OBJLoader2Parser.prototype = {
 
 				// LF
 				case 10:
-					this._processLine( buffer, bufferPointer, slashesCount, word, currentByte );
+					this._processLine( buffer, bufferPointer, slashesCount, word, currentByte);
 					word = '';
 					bufferPointer = 0;
 					slashesCount = 0;
@@ -384,7 +384,7 @@ OBJLoader2Parser.prototype = {
 
 		}
 
-		this._processLine( buffer, bufferPointer, slashesCount, word, currentByte );
+		this._processLine( buffer, bufferPointer, slashesCount, word, currentByte);
 		this._finalizeParsing();
 		if ( this.logging.enabled ) console.timeEnd( 'OBJLoader2Parser.execute' );
 
@@ -1074,11 +1074,13 @@ OBJLoader2Parser.prototype = {
 			{
 				cmd: 'assetAvailable',
 				type: 'mesh',
+				meshName: result.name,
 				progress: {
 					numericalValue: this.globalCounts.currentByte / this.globalCounts.totalBytes
 				},
 				params: {
-					meshName: result.name
+					// 0: mesh, 1: line, 2: point
+					geometryType: this.rawMesh.faceType < 4 ? 0 : ( this.rawMesh.faceType === 6 ) ? 2 : 1
 				},
 				materials: {
 					multiMaterial: createMultiMaterial,
@@ -1091,9 +1093,7 @@ OBJLoader2Parser.prototype = {
 					colors: colorFA,
 					normals: normalFA,
 					uvs: uvFA
-				},
-				// 0: mesh, 1: line, 2: point
-				geometryType: this.rawMesh.faceType < 4 ? 0 : ( this.rawMesh.faceType === 6 ) ? 2 : 1
+				}
 			},
 			[ vertexFA.buffer ],
 			indexUA !== null ? [ indexUA.buffer ] : null,
