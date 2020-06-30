@@ -16,14 +16,11 @@ class TaskManager {
      */
     constructor ( maximumWorkerCount ) {
 
-        this.types = new Map();
+        this.taskTypes = new Map();
         this.verbose = false;
-        this.maximumWorkerCount = 4
-        if ( maximumWorkerCount ) {
-
-            this.maximumWorkerCount = maximumWorkerCount;
-
-        }
+        this.maximumWorkerCount = maximumWorkerCount ? maximumWorkerCount : 4;
+        this.actualExecutionCount = 0;
+        this.storedPromises = [];
 
     }
 
@@ -54,18 +51,18 @@ class TaskManager {
 
     /**
      * Returns true if support for the given task type is available.
-     * @param {string} type The type as string
+     * @param {string} taskType The task type as string
      * @return boolean
      */
-    supportsType ( type ) {
+    supportsTaskType ( taskType ) {
 
-        return this.types.has( type );
+        return this.taskTypes.has( taskType );
 
     }
 
     /**
      * Registers functionality for a new task type.
-     * @param {string} type The name to be used for registration.
+     * @param {string} taskType The name to be used for registration.
      * @param {function} initFunction The function to be called when the worker is initialised
      * @param {function} executeFunction The function to be called when the worker is executed
      * @param {function} comRoutingFunction The function that should handle communication, leave undefined for default behavior
@@ -73,43 +70,43 @@ class TaskManager {
      * @param {String[]} [dependencyUrls]
      * @return {TaskManager}
      */
-    registerType ( type, initFunction, executeFunction, comRoutingFunction, fallback, dependencyUrls ) {
+    registerTaskType ( taskType, initFunction, executeFunction, comRoutingFunction, fallback, dependencyUrls ) {
 
-        let workerTypeDefinition = new WorkerTypeDefinition( type, this.maximumWorkerCount, fallback, this.verbose );
+        let workerTypeDefinition = new WorkerTypeDefinition( taskType, this.maximumWorkerCount, fallback, this.verbose );
         workerTypeDefinition.setFunctions( initFunction, executeFunction, comRoutingFunction );
         workerTypeDefinition.setDependencyUrls( dependencyUrls );
-        this.types.set( type, workerTypeDefinition );
+        this.taskTypes.set( taskType, workerTypeDefinition );
         return this;
 
     }
 
     /**
      * Registers functionality for a new task type based on module file.
-     * @param {string} type The name to be used for registration.
-     * @param {string} workerJsmUrl The URL to be used for the Worker. Module must provide logic to handle "init" and "execute" messages.
+     * @param {string} taskType The name to be used for registration.
+     * @param {string} workerModuleUrl The URL to be used for the Worker. Module must provide logic to handle "init" and "execute" messages.
      * @return {TaskManager}
      */
-    registerTypeJsm ( type, workerJsmUrl ) {
+    registerTaskTypeModule ( taskType, workerModuleUrl ) {
 
-        let workerTypeDefinition = new WorkerTypeDefinition( type, this.maximumWorkerCount, false, this.verbose );
-        workerTypeDefinition.setWorkerJsm( workerJsmUrl );
-        this.types.set( type, workerTypeDefinition );
+        let workerTypeDefinition = new WorkerTypeDefinition( taskType, this.maximumWorkerCount, false, this.verbose );
+        workerTypeDefinition.setWorkerModule( workerModuleUrl );
+        this.taskTypes.set( taskType, workerTypeDefinition );
         return this;
 
     }
 
     /**
      * Provides initialization configuration and transferable objects.
-     * @param {string} type The name of the registered task type.
+     * @param {string} taskType The name of the registered task type.
      * @param {object} config Configuration properties as serializable string.
      * @param {Transferable[]} [transferables] Any optional {@link ArrayBuffer}.
      */
-    async initType ( type, config, transferables ) {
+    async initTaskType ( taskType, config, transferables ) {
 
-        let workerTypeDefinition = this.types.get( type );
-        if ( workerTypeDefinition.isWorkerJsm() ) {
+        let workerTypeDefinition = this.taskTypes.get( taskType );
+        if ( workerTypeDefinition.isWorkerModule() ) {
 
-            return await workerTypeDefinition.createWorkersJsm()
+            return await workerTypeDefinition.createWorkerModules()
                 .then( instances => workerTypeDefinition.initWorkers( instances, config, transferables ) );
 
         }
@@ -126,70 +123,79 @@ class TaskManager {
 
     /**
      * Queues a new task of the given type. Task will not execute until initialization completes.
-     * @param {string} type The name of the registered task type.
+     * @param {string} taskType The name of the registered task type.
      * @param {object} config Configuration properties as serializable string.
      * @param {Transferable[]} [transferables] Any optional {@link ArrayBuffer}.
      * @return {Promise}
      */
-    async addTask ( type, config, transferables ) {
+    async enqueueForExecution ( taskType, config, transferables ) {
 
-        let workerTypeDefinition = this.types.get( type );
-        let taskWorker = workerTypeDefinition.getAvailableTask();
-        return new Promise( ( resolveUser, rejectUser ) => {
+        let localPromise = new Promise( ( resolveUser, rejectUser ) => {
 
-            /**
-             * Function wrapping worker execution. It binds resolve and reject to onmessage and onerror.
-             *
-             * @param {TaskWorker} taskWorkerExecute
-             * @param {function} resolveExecute
-             * @param {function} rejectExecute
-             */
-            function executeWorker( taskWorkerExecute, resolveExecute, rejectExecute ) {
-
-                let promiseWorker = new Promise( ( resolveWorker, rejectWorker ) => {
-
-                    taskWorkerExecute.onmessage = resolveWorker;
-                    taskWorkerExecute.onerror = rejectWorker;
-
-                    taskWorkerExecute.postMessage( {
-                        cmd: "execute",
-                        id: taskWorkerExecute.getId(),
-                        config: config
-                    }, transferables );
-
-                } );
-                promiseWorker.then( ( e ) => {
-
-                    resolveExecute( e.data );
-                    workerTypeDefinition.returnAvailableTask( taskWorkerExecute );
-
-                } ).catch( ( e ) => {
-
-                    rejectExecute( "Execution error: " + e );
-
-                } );
-
-            }
-
-            if ( taskWorker ) {
-
-                executeWorker( taskWorker, resolveUser, rejectUser );
-
-            }
-            else {
-
-                // store promises that can not directly executed as the limit has been reached.
-                // storedPromises are checked when returnAvailableTask is called.
-                workerTypeDefinition.workers.storedPromises.push( {
-                    exec: executeWorker,
-                    resolve: resolveUser,
-                    reject: rejectUser
-                } );
-
-            }
+            this.storedPromises.push( {
+                taskType: taskType,
+                config: config,
+                transferables: transferables,
+                resolve: resolveUser,
+                reject: rejectUser
+            } );
 
         } )
 
+        this._verify();
+
+        return localPromise;
+
+    }
+
+    _verify () {
+
+        while ( this.actualExecutionCount < this.maximumWorkerCount && this.storedPromises.length > 0 ) {
+
+            let storedExec = this.storedPromises.shift();
+            if ( storedExec ) {
+
+                let workerTypeDefinition = this.taskTypes.get( storedExec.taskType );
+                let taskWorker = workerTypeDefinition.getAvailableTask();
+                if ( taskWorker ) {
+
+                    this.actualExecutionCount++;
+                    let promiseWorker = new Promise( ( resolveWorker, rejectWorker ) => {
+
+                        taskWorker.onmessage = resolveWorker;
+                        taskWorker.onerror = rejectWorker;
+
+                        taskWorker.postMessage( {
+                            cmd: "execute",
+                            id: taskWorker.getId(),
+                            config: storedExec.config
+                        }, storedExec.transferables );
+
+                    } );
+                    promiseWorker.then( ( e ) => {
+
+                        workerTypeDefinition.returnAvailableTask( taskWorker );
+                        storedExec.resolve( e.data );
+                        this.actualExecutionCount --;
+                        this._verify();
+
+                    } ).catch( ( e ) => {
+
+                        storedExec.reject( "Execution error: " + e );
+
+                    } );
+
+                }
+                else {
+
+                    // try later again, add at the end for now
+                    this.storedPromises.push( storedExec );
+
+                }
+
+            }
+
+        }
     }
 
     /**
@@ -198,7 +204,7 @@ class TaskManager {
      */
     dispose () {
 
-        for ( let workerTypeDefinition of this.types.values() ) {
+        for ( let workerTypeDefinition of this.taskTypes.values() ) {
 
             workerTypeDefinition.dispose();
 
@@ -225,8 +231,8 @@ class WorkerTypeDefinition {
     /**
 
      */
-    constructor ( type, maximumCount, fallback, verbose ) {
-        this.type = type;
+    constructor ( taskType, maximumCount, fallback, verbose ) {
+        this.taskType = taskType;
         this.maximumCount = maximumCount;
         this.fallback = fallback;
         this.verbose = verbose === true;
@@ -250,22 +256,21 @@ class WorkerTypeDefinition {
             /**
              * @type {URL}
              */
-            workerJsmUrl: null
+            workerModuleUrl: null
         };
 
 
         this.workers = {
             code: [],
             instances: [],
-            available: [],
-            storedPromises: []
+            available: []
         };
 
     }
 
-    getType () {
+    getTaskType () {
 
-        return this.type;
+        return this.taskType;
 
     }
 
@@ -304,7 +309,7 @@ class WorkerTypeDefinition {
     }
 
     /**
-     * Set the url of all dependent libraries (only used in non-jsm case).
+     * Set the url of all dependent libraries (only used in non-module case).
      *
      * @param {String[]} dependencyUrls URLs of code init and execute functions rely on.
      */
@@ -319,24 +324,24 @@ class WorkerTypeDefinition {
     }
 
     /**
-     * Set the url of the jsm worker.
+     * Set the url of the module worker.
      *
-     * @param {string} workerJsmUrl The URL is created from this string.
+     * @param {string} workerModuleUrl The URL is created from this string.
      */
-    setWorkerJsm ( workerJsmUrl ) {
+    setWorkerModule ( workerModuleUrl ) {
 
-        this.functions.workerJsmUrl = new URL( workerJsmUrl, window.location.href );
+        this.functions.workerModuleUrl = new URL( workerModuleUrl, window.location.href );
 
     }
 
     /**
-     * Is it a jsm worker?
+     * Is it a module worker?
      *
      * @return {boolean} True or false
      */
-    isWorkerJsm () {
+    isWorkerModule () {
 
-        return ( this.functions.workerJsmUrl !== null );
+        return ( this.functions.workerModuleUrl !== null );
 
     }
 
@@ -351,11 +356,11 @@ class WorkerTypeDefinition {
         fileLoader.setResponseType( 'arraybuffer' );
         for ( let url of this.functions.dependencies.urls ) {
 
-            let dep = await fileLoader.loadAsync( url.href, report => { if ( this.verbose ) console.log( report.detail.text ); } )
+            let dep = await fileLoader.loadAsync( url.href, report => { if ( this.verbose ) console.log( report ); } )
             this.functions.dependencies.code.push( dep );
 
         }
-        if ( this.verbose ) console.log( 'Task: ' + this.getType() + ': Waiting for completion of loading of all dependencies.');
+        if ( this.verbose ) console.log( 'Task: ' + this.getTaskType() + ': Waiting for completion of loading of all dependencies.');
         return await Promise.all( this.functions.dependencies.code );
 
     }
@@ -390,13 +395,14 @@ class WorkerTypeDefinition {
      */
     async createWorkers ( code ) {
 
-        let worker, workerBlob;
+        let worker;
         if ( !this.fallback ) {
 
+            let workerBlob = new Blob( this.functions.dependencies.code.concat( this.workers.code ), { type: 'application/javascript' } );
+            let objectURL = window.URL.createObjectURL( workerBlob );
             for ( let i = 0; i < this.maximumCount; i ++ ) {
 
-                workerBlob = new Blob( this.functions.dependencies.code.concat( this.workers.code ), { type: 'application/javascript' } );
-                worker = new TaskWorker( i, window.URL.createObjectURL( workerBlob ) );
+                worker = new TaskWorker( i, objectURL );
                 this.workers.instances[ i ] = worker;
 
             }
@@ -404,8 +410,12 @@ class WorkerTypeDefinition {
         }
         else {
 
-            worker = new FakeTaskWorker( 0, this.functions.init.ref, this.functions.execute.ref );
-            this.workers.instances[ 0 ] = worker;
+            for ( let i = 0; i < this.maximumCount; i ++ ) {
+
+                worker = new FakeTaskWorker( i, this.functions.init.ref, this.functions.execute.ref );
+                this.workers.instances[ i ] = worker;
+
+            }
 
         }
         return this.workers.instances;
@@ -416,11 +426,11 @@ class WorkerTypeDefinition {
      *
      * @return {Promise<TaskWorker[]>}
      */
-    async createWorkersJsm () {
+    async createWorkerModules () {
 
         for ( let worker, i = 0; i < this.maximumCount; i++ ) {
 
-            worker = new TaskWorker( i, this.functions.workerJsmUrl.href, { type: "module" } );
+            worker = new TaskWorker( i, this.functions.workerModuleUrl.href, { type: "module" } );
             this.workers.instances[ i ] = worker;
 
         }
@@ -430,7 +440,7 @@ class WorkerTypeDefinition {
 
     /**
      *
-     * @param {TaskWorker[]} instances
+     * @param {TaskWorker[]|FakeTaskWorker[]} instances
      * @param {object} config
      * @param {Transferable[]} transferables
      * @return {Promise<TaskWorker[]>}
@@ -454,15 +464,15 @@ class WorkerTypeDefinition {
             this.workers.available.push( taskWorker );
 
         }
-        if ( this.verbose ) console.log( 'Task: ' + this.getType() + ': Waiting for completion of initialization of all workers.');
+        if ( this.verbose ) console.log( 'Task: ' + this.getTaskType() + ': Waiting for completion of initialization of all workers.');
         return await Promise.all( this.workers.available );
 
     }
 
     /**
-     * Returns the first {@link TaskWorker} from array of available workers.
+     * Returns the first {@link TaskWorker} or {@link FakeTaskWorker} from array of available workers.
      *
-     * @return {TaskWorker|null}
+     * @return {TaskWorker|FakeTaskWorker|undefined}
      */
     getAvailableTask () {
 
@@ -472,17 +482,11 @@ class WorkerTypeDefinition {
 
     /**
      *
-     * @param {TaskWorker} taskWorker
+     * @param {TaskWorker|FakeTaskWorker} taskWorker
      */
     returnAvailableTask ( taskWorker ) {
 
         this.workers.available.push( taskWorker );
-        let storedExec = this.workers.storedPromises.shift();
-        if ( storedExec ) {
-
-            storedExec.exec( this.getAvailableTask(), storedExec.resolve, storedExec.reject );
-
-        }
 
     }
 
@@ -534,7 +538,7 @@ class TaskWorker extends Worker {
 /**
  *
  */
-class FakeTaskWorker extends TaskWorker {
+class FakeTaskWorker {
 
     /**
      *
@@ -544,11 +548,21 @@ class FakeTaskWorker extends TaskWorker {
      */
     constructor( id, initFunction, executeFunction ) {
 
-        super( id, null )
+        this.id = id;
         this.functions = {
             init: initFunction,
             execute: executeFunction
         }
+
+    }
+
+    /**
+     *
+     * @return {*}
+     */
+    getId() {
+
+        return this.id;
 
     }
 
