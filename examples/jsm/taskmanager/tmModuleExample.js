@@ -12,16 +12,16 @@ import { comRouting } from "./tmDefaultComRouting.js";
 
 
 function init ( context, id, config ) {
-		context.storage = {
-			whoami: id,
-		};
+	context.storage = {
+		whoami: id,
+	};
 
-		context.postMessage( {
-			cmd: "init",
-			id: id
-		} );
+	context.postMessage( {
+		cmd: "init",
+		id: id
+	} );
 
-	}
+}
 
 function execute ( context, id, config ) {
 
@@ -34,7 +34,7 @@ function execute ( context, id, config ) {
 		vertexArray[ i ] = vertexArray[ i ] + 10 * ( Math.random() - 0.5 );
 
 	}
-	let payload = TransferableUtils.packageBufferGeometry( bufferGeometry, 'tmProto' + config.count, 2,[ 'defaultPointMaterial' ] );
+	let payload = TransferableUtils.packageBufferGeometry( bufferGeometry, config.id, 'tmProto' + config.id, 2,[ 'defaultPointMaterial' ] );
 
 	let randArray = new Uint8Array( 3 );
 	context.crypto.getRandomValues( randArray );

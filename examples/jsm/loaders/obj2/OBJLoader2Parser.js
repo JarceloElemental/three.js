@@ -14,26 +14,51 @@ const OBJLoader2Parser = function () {
 
 	const scope = this;
 	this.callbacks = {
+
+		/**
+		 * Announce parse progress feedback which is logged to the console.
+		 * @private
+		 *
+		 * @param {string} text Textual description of the event
+		 */
 		onProgress: function ( text ) {
 
-			scope._onProgress( text );
+			const message = text ? text : '';
+			if ( scope.logging.enabled && scope.logging.debug ) {
+
+				console.log( message );
+
+			}
+
+		},
+
+		/**
+		 * Announce error feedback which is logged as error message.
+		 * @private
+		 *
+		 * @param {String} errorMessage The event containing the error
+		 */
+		onError: function ( errorMessage ) {
+
+			if ( scope.logging.enabled && scope.logging.debug ) {
+
+				console.error( errorMessage );
+
+			}
 
 		},
 		onAssetAvailable: function ( payload ) {
 
-			scope._onAssetAvailable( payload );
-
-		},
-		onError: function ( errorMessage ) {
-
-			scope._onError( errorMessage );
+			const errorMessage = 'OBJLoader2Parser does not provide implementation for onAssetAvailable. Aborting...';
+			scope.callbacks.onError( errorMessage );
+			throw errorMessage;
 
 		},
 		onLoad: function ( object3d, message ) {
 
-			scope._onLoad( object3d, message );
+			console.log( 'You reached parser default onLoad callback: ' + message );
 
-		},
+		}
 	};
 	this.contentRef = null;
 	this.legacyMode = false;
@@ -48,6 +73,7 @@ const OBJLoader2Parser = function () {
 	this.colors = [];
 	this.normals = [];
 	this.uvs = [];
+	this.objectId = 0;
 
 	this.rawMesh = {
 		objectName: '',
@@ -83,13 +109,7 @@ const OBJLoader2Parser = function () {
 		totalBytes: 0
 	};
 
-};
-
-OBJLoader2Parser.prototype = {
-
-	constructor: OBJLoader2Parser,
-
-	_resetRawMesh: function () {
+	this._resetRawMesh = function () {
 
 		// faces are stored according combined index of group, material and smoothingGroup (0 or not)
 		this.rawMesh.subGroups = [];
@@ -105,7 +125,7 @@ OBJLoader2Parser.prototype = {
 		this.rawMesh.counts.mtlCount = 0;
 		this.rawMesh.counts.smoothingGroupCount = 0;
 
-	},
+	}
 
 	/**
 	 * Tells whether a material shall be created per smoothing group.
@@ -113,12 +133,12 @@ OBJLoader2Parser.prototype = {
 	 * @param {boolean} materialPerSmoothingGroup=false
 	 * @return {OBJLoader2Parser}
 	 */
-	setMaterialPerSmoothingGroup: function ( materialPerSmoothingGroup ) {
+	this.setMaterialPerSmoothingGroup = function ( materialPerSmoothingGroup ) {
 
 		this.materialPerSmoothingGroup = materialPerSmoothingGroup === true;
 		return this;
 
-	},
+	}
 
 	/**
 	 * Usually 'o' is meta-information and does not result in creation of new meshes, but mesh creation on occurrence of "o" can be enforced.
@@ -126,12 +146,12 @@ OBJLoader2Parser.prototype = {
 	 * @param {boolean} useOAsMesh=false
 	 * @return {OBJLoader2Parser}
 	 */
-	setUseOAsMesh: function ( useOAsMesh ) {
+	this.setUseOAsMesh = function ( useOAsMesh ) {
 
 		this.useOAsMesh = useOAsMesh === true;
 		return this;
 
-	},
+	}
 
 	/**
 	 * Instructs loaders to create indexed {@link BufferGeometry}.
@@ -139,12 +159,12 @@ OBJLoader2Parser.prototype = {
 	 * @param {boolean} useIndices=false
 	 * @return {OBJLoader2Parser}
 	 */
-	setUseIndices: function ( useIndices ) {
+	this.setUseIndices = function ( useIndices ) {
 
 		this.useIndices = useIndices === true;
 		return this;
 
-	},
+	}
 
 	/**
 	 * Tells whether normals should be completely disregarded and regenerated.
@@ -152,23 +172,23 @@ OBJLoader2Parser.prototype = {
 	 * @param {boolean} disregardNormals=false
 	 * @return {OBJLoader2Parser}
 	 */
-	setDisregardNormals: function ( disregardNormals ) {
+	this.setDisregardNormals = function ( disregardNormals ) {
 
 		this.disregardNormals = disregardNormals === true;
 		return this;
 
-	},
+	}
 
 	/**
 	 * Clears materials object and sets the new ones.
 	 *
 	 * @param {Object} materials Object with named materials
 	 */
-	setMaterials: function ( materials ) {
+	this.setMaterials = function ( materials ) {
 
  		this.materials = Object.assign( {}, materials );
 
-	},
+	}
 
 	/**
 	 * Register a function that is called once an asset (mesh/material) becomes available.
@@ -176,17 +196,16 @@ OBJLoader2Parser.prototype = {
 	 * @param onAssetAvailable
 	 * @return {OBJLoader2Parser}
 	 */
-	setCallbackOnAssetAvailable: function ( onAssetAvailable ) {
+	this.setCallbackOnAssetAvailable = function ( onAssetAvailable ) {
 
 		if ( onAssetAvailable !== null && onAssetAvailable !== undefined && onAssetAvailable instanceof Function ) {
 
 			this.callbacks.onAssetAvailable = onAssetAvailable;
 
 		}
-
 		return this;
 
-	},
+	}
 
 	/**
 	 * Register a function that is used to report overall processing progress.
@@ -194,17 +213,16 @@ OBJLoader2Parser.prototype = {
 	 * @param {Function} onProgress
 	 * @return {OBJLoader2Parser}
 	 */
-	setCallbackOnProgress: function ( onProgress ) {
+	this.setCallbackOnProgress = function ( onProgress ) {
 
 		if ( onProgress !== null && onProgress !== undefined && onProgress instanceof Function ) {
 
 			this.callbacks.onProgress = onProgress;
 
 		}
-
 		return this;
 
-	},
+	}
 
 	/**
 	 * Register an error handler function that is called if errors occur. It can decide to just log or to throw an exception.
@@ -212,17 +230,16 @@ OBJLoader2Parser.prototype = {
 	 * @param {Function} onError
 	 * @return {OBJLoader2Parser}
 	 */
-	setCallbackOnError: function ( onError ) {
+	this.setCallbackOnError = function ( onError ) {
 
 		if ( onError !== null && onError !== undefined && onError instanceof Function ) {
 
 			this.callbacks.onError = onError;
 
 		}
-
 		return this;
 
-	},
+	}
 
 	/**
 	 * Register a function that is called when parsing was completed.
@@ -230,64 +247,16 @@ OBJLoader2Parser.prototype = {
 	 * @param {Function} onLoad
 	 * @return {OBJLoader2Parser}
 	 */
-	setCallbackOnLoad: function ( onLoad ) {
+	this.setCallbackOnLoad = function ( onLoad ) {
 
 		if ( onLoad !== null && onLoad !== undefined && onLoad instanceof Function ) {
 
 			this.callbacks.onLoad = onLoad;
 
 		}
-
 		return this;
 
-	},
-
-	/**
-	 * Announce parse progress feedback which is logged to the console.
-	 * @private
-	 *
-	 * @param {string} text Textual description of the event
-	 */
-	_onProgress: function ( text ) {
-
-		const message = text ? text : '';
-		if ( this.logging.enabled && this.logging.debug ) {
-
-			console.log( message );
-
-		}
-
-	},
-
-	/**
-	 * Announce error feedback which is logged as error message.
-	 * @private
-	 *
-	 * @param {String} errorMessage The event containing the error
-	 */
-	_onError: function ( errorMessage ) {
-
-		if ( this.logging.enabled && this.logging.debug ) {
-
-			console.error( errorMessage );
-
-		}
-
-	},
-
-	_onAssetAvailable: function ( /*payload*/ ) {
-
-		const errorMessage = 'OBJLoader2Parser does not provide implementation for onAssetAvailable. Aborting...';
-		this.callbacks.onError( errorMessage );
-		throw errorMessage;
-
-	},
-
-	_onLoad: function ( object3d, message ) {
-
-		console.log( 'You reached parser default onLoad callback: ' + message );
-
-	},
+	}
 
 	/**
 	 * Enable or disable logging in general (except warn and error), plus enable or disable debug logging.
@@ -297,15 +266,15 @@ OBJLoader2Parser.prototype = {
 	 *
 	 * @return {OBJLoader2Parser}
 	 */
-	setLogging: function ( enabled, debug ) {
+	this.setLogging = function ( enabled, debug ) {
 
 		this.logging.enabled = enabled === true;
 		this.logging.debug = debug === true;
 		return this;
 
-	},
+	}
 
-	_configure: function () {
+	this._configure = function () {
 
 		this._pushSmoothingGroup( 1 );
 		if ( this.logging.enabled ) {
@@ -325,14 +294,14 @@ OBJLoader2Parser.prototype = {
 
 		}
 
-	},
+	}
 
 	/**
 	 * Parse the provided arraybuffer
 	 *
 	 * @param {Uint8Array} arrayBuffer OBJ data as Uint8Array
 	 */
-	execute: function ( arrayBuffer ) {
+	this.execute = function ( arrayBuffer ) {
 
 		if ( this.logging.enabled ) console.time( 'OBJLoader2Parser.execute' );
 		this._configure();
@@ -388,14 +357,14 @@ OBJLoader2Parser.prototype = {
 		this._finalizeParsing();
 		if ( this.logging.enabled ) console.timeEnd( 'OBJLoader2Parser.execute' );
 
-	},
+	}
 
 	/**
 	 * Parse the provided text
 	 *
 	 * @param {string} text OBJ data as string
 	 */
-	executeLegacy: function ( text ) {
+	this.executeLegacy = function ( text ) {
 
 		if ( this.logging.enabled ) console.time( 'OBJLoader2Parser.executeLegacy' );
 		this._configure();
@@ -446,9 +415,9 @@ OBJLoader2Parser.prototype = {
 		this._finalizeParsing();
 		if ( this.logging.enabled ) console.timeEnd( 'OBJLoader2Parser.executeLegacy' );
 
-	},
+	}
 
-	_processLine: function ( buffer, bufferPointer, slashesCount, word, currentByte ) {
+	this._processLine = function ( buffer, bufferPointer, slashesCount, word, currentByte ) {
 
 		this.globalCounts.lineByte = this.globalCounts.currentByte;
 		this.globalCounts.currentByte = currentByte;
@@ -622,9 +591,9 @@ OBJLoader2Parser.prototype = {
 
 		}
 
-	},
+	}
 
-	_pushSmoothingGroup: function ( smoothingGroup ) {
+	this._pushSmoothingGroup = function ( smoothingGroup ) {
 
 		let smoothingGroupInt = parseInt( smoothingGroup );
 		if ( isNaN( smoothingGroupInt ) ) {
@@ -644,7 +613,7 @@ OBJLoader2Parser.prototype = {
 
 		}
 
-	},
+	}
 
 	/**
 	 * Expanded faceTypes include all four face types, both line types and the point type
@@ -656,7 +625,7 @@ OBJLoader2Parser.prototype = {
 	 * faceType = 5: "l vertex ..."
 	 * faceType = 6: "p vertex ..."
 	 */
-	_checkFaceType: function ( faceType ) {
+	this._checkFaceType = function ( faceType ) {
 
 		if ( this.rawMesh.faceType !== faceType ) {
 
@@ -666,9 +635,9 @@ OBJLoader2Parser.prototype = {
 
 		}
 
-	},
+	}
 
-	_checkSubGroup: function () {
+	this._checkSubGroup = function () {
 
 		const index = this.rawMesh.activeMtlName + '|' + this.rawMesh.smoothingGroup.normalized;
 		this.rawMesh.subGroupInUse = this.rawMesh.subGroups[ index ];
@@ -693,9 +662,9 @@ OBJLoader2Parser.prototype = {
 
 		}
 
-	},
+	}
 
-	_buildFace: function ( faceIndexV, faceIndexU, faceIndexN ) {
+	this._buildFace = function ( faceIndexV, faceIndexU, faceIndexN ) {
 
 		const subGroupInUse = this.rawMesh.subGroupInUse;
 		const scope = this;
@@ -770,9 +739,9 @@ OBJLoader2Parser.prototype = {
 
 		this.rawMesh.counts.faceCount ++;
 
-	},
+	}
 
-	_createRawMeshReport: function ( inputObjectCount ) {
+	this._createRawMeshReport = function ( inputObjectCount ) {
 
 		return 'Input Object number: ' + inputObjectCount +
 			'\n\tObject name: ' + this.rawMesh.objectName +
@@ -785,12 +754,12 @@ OBJLoader2Parser.prototype = {
 			'\n\tMaterial count: ' + this.rawMesh.counts.mtlCount +
 			'\n\tReal MeshOutputGroup count: ' + this.rawMesh.subGroups.length;
 
-	},
+	}
 
 	/**
 	 * Clear any empty subGroup and calculate absolute vertex, normal and uv counts
 	 */
-	_finalizeRawMesh: function () {
+	this._finalizeRawMesh = function () {
 
 		const meshOutputGroupTemp = [];
 		let meshOutputGroup;
@@ -849,9 +818,9 @@ OBJLoader2Parser.prototype = {
 
 		return result;
 
-	},
+	}
 
-	_processCompletedMesh: function () {
+	this._processCompletedMesh = function () {
 
 		const result = this._finalizeRawMesh();
 		const haveMesh = result !== null;
@@ -868,15 +837,20 @@ OBJLoader2Parser.prototype = {
 
 			this._buildMesh( result );
 			const progressBytesPercent = this.globalCounts.currentByte / this.globalCounts.totalBytes;
-			this._onProgress( 'Completed [o: ' + this.rawMesh.objectName + ' g:' + this.rawMesh.groupName + '' +
+			this.callbacks.onProgress( 'Completed [o: ' + this.rawMesh.objectName + ' g:' + this.rawMesh.groupName + '' +
 				'] Total progress: ' + ( progressBytesPercent * 100 ).toFixed( 2 ) + '%' );
 			this._resetRawMesh();
 
 		}
+		this.callbacks.onAssetAvailable(
+			{
+				cmd: 'execComplete',
+				type: 'void'
+			} );
 
 		return haveMesh;
 
-	},
+	}
 
 	/**
 	 * SubGroups are transformed to too intermediate format that is forwarded to the MeshReceiver.
@@ -884,7 +858,7 @@ OBJLoader2Parser.prototype = {
 	 *
 	 * @param result
 	 */
-	_buildMesh: function ( result ) {
+	this._buildMesh = function ( result ) {
 
 		const meshOutputGroups = result.subGroups;
 
@@ -1074,6 +1048,7 @@ OBJLoader2Parser.prototype = {
 			{
 				cmd: 'assetAvailable',
 				type: 'mesh',
+				id: this.objectId,
 				meshName: result.name,
 				progress: {
 					numericalValue: this.globalCounts.currentByte / this.globalCounts.totalBytes
@@ -1102,9 +1077,9 @@ OBJLoader2Parser.prototype = {
 			uvFA !== null ? [ uvFA.buffer ] : null
 		);
 
-	},
+	}
 
-	_finalizeParsing: function () {
+	this._finalizeParsing = function () {
 
 		if ( this.logging.enabled ) console.info( 'Global output object count: ' + this.outputObjectCount );
 		if ( this._processCompletedMesh() && this.logging.enabled ) {

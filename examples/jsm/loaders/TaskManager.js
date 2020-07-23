@@ -88,14 +88,14 @@ class TaskManager {
      * @param {function} executeFunction The function to be called when the worker is executed
      * @param {function} comRoutingFunction The function that should handle communication, leave undefined for default behavior
      * @param {boolean} fallback Set to true if execution should be performed in main
-     * @param {String[]} [dependencyUrls]
+     * @param {Object[]} [dependencyDescriptions]
      * @return {TaskManager}
      */
-    registerTaskType ( taskType, initFunction, executeFunction, comRoutingFunction, fallback, dependencyUrls ) {
+    registerTaskType ( taskType, initFunction, executeFunction, comRoutingFunction, fallback, dependencyDescriptions ) {
 
         let workerTypeDefinition = new WorkerTypeDefinition( taskType, this.maxParallelExecutions, fallback, this.verbose );
         workerTypeDefinition.setFunctions( initFunction, executeFunction, comRoutingFunction );
-        workerTypeDefinition.setDependencyUrls( dependencyUrls );
+        workerTypeDefinition.setDependencyDescriptions( dependencyDescriptions );
         this.taskTypes.set( taskType, workerTypeDefinition );
         return this;
 
@@ -122,7 +122,7 @@ class TaskManager {
      *
      * @param {string} taskType The name of the registered task type.
      * @param {object} config Configuration properties as serializable string.
-     * @param {Transferable[]} [transferables] Any optional {@link ArrayBuffer}.
+     * @param {Object} [transferables] Any optional {@link ArrayBuffer} encapsulated in object..
      */
     async initTaskType ( taskType, config, transferables ) {
 
@@ -149,14 +149,15 @@ class TaskManager {
      *
      * @param {string} taskType The name of the registered task type.
      * @param {object} config Configuration properties as serializable string.
-     * @param {Transferable[]} [transferables] Any optional {@link ArrayBuffer}.
+     * @param {Function} assetAvailableFunction Invoke this function if an asset become intermediately available
+     * @param {Object} [transferables] Any optional {@link ArrayBuffer} encapsulated in object.
      * @return {Promise}
      */
-    async enqueueForExecution ( taskType, config, transferables ) {
+    async enqueueForExecution ( taskType, config, assetAvailableFunction, transferables ) {
 
         let localPromise = new Promise( ( resolveUser, rejectUser ) => {
 
-            this.storedExecutions.push( new StoredExecution( taskType, config, resolveUser, rejectUser, transferables ) );
+            this.storedExecutions.push( new StoredExecution( taskType, config, assetAvailableFunction, resolveUser, rejectUser, transferables ) );
 
         } );
         this._kickExecutions();
@@ -178,12 +179,30 @@ class TaskManager {
                     this.actualExecutionCount++;
                     let promiseWorker = new Promise( ( resolveWorker, rejectWorker ) => {
 
-                        taskWorker.onmessage = resolveWorker;
+                        taskWorker.onmessage = function ( e ) {
+
+                            // allow intermediate asset provision before flagging execComplete
+                            if ( e.data.cmd === 'assetAvailable' ) {
+
+                                if ( storedExecution.assetAvailableFunction instanceof Function ) {
+
+                                    storedExecution.assetAvailableFunction( e.data );
+
+                                }
+
+                            }
+                            else {
+
+                                resolveWorker( e );
+
+                            }
+
+                        };
                         taskWorker.onerror = rejectWorker;
 
                         taskWorker.postMessage( {
                             cmd: "execute",
-                            id: taskWorker.getId(),
+                            workerId: taskWorker.getId(),
                             config: storedExecution.config
                         }, storedExecution.transferables );
 
@@ -268,8 +287,8 @@ class WorkerTypeDefinition {
                 code: null
             },
             dependencies: {
-                /** @type {URL[]} */
-                urls: [],
+                /** @type {Object[]} */
+                descriptions: [],
                 /** @type {string[]} */
                 code: []
             },
@@ -334,13 +353,13 @@ class WorkerTypeDefinition {
     /**
      * Set the url of all dependent libraries (only used in non-module case).
      *
-     * @param {String[]} dependencyUrls URLs of code init and execute functions rely on.
+     * @param {Object[]} dependencyDescriptions URLs of code init and execute functions rely on.
      */
-    setDependencyUrls ( dependencyUrls ) {
+    setDependencyDescriptions ( dependencyDescriptions ) {
 
-        if ( dependencyUrls ) {
+        if ( dependencyDescriptions ) {
 
-            dependencyUrls.forEach( url => { this.functions.dependencies.urls.push( new URL( url, window.location.href ) ) } );
+            dependencyDescriptions.forEach( description => { this.functions.dependencies.descriptions.push( description ) } );
 
         }
 
@@ -377,9 +396,20 @@ class WorkerTypeDefinition {
 
         let fileLoader = new FileLoader();
         fileLoader.setResponseType( 'arraybuffer' );
-        for ( let url of this.functions.dependencies.urls ) {
+        for ( let description of this.functions.dependencies.descriptions ) {
 
-            let dep = await fileLoader.loadAsync( url.href, report => { if ( this.verbose ) console.log( report ); } )
+            let dep;
+            if ( description.url ) {
+
+                let url = new URL( description.url, window.location.href );
+                dep = await fileLoader.loadAsync( url.href, report => { if ( this.verbose ) console.log( report ); } )
+
+            }
+            if ( description.code ) {
+
+                dep = description.code;
+
+            }
             this.functions.dependencies.code.push( dep );
 
         }
@@ -469,7 +499,7 @@ class WorkerTypeDefinition {
      *
      * @param {TaskWorker[]|MockedTaskWorker[]} instances
      * @param {object} config
-     * @param {Transferable[]} transferables
+     * @param {Object} transferables
      * @return {Promise<TaskWorker[]>}
      */
     async initWorkers ( instances, config, transferables ) {
@@ -481,11 +511,20 @@ class WorkerTypeDefinition {
                 taskWorker.onmessage = resolveWorker;
                 taskWorker.onerror = rejectWorker;
 
+                // ensure all transferables are copies to all workers on int!
+                let transferablesToWorker;
+                if ( transferables ) {
+                    transferablesToWorker = {};
+                    for ( let [ key, transferable ] of Object.entries( transferables ) ) {
+                        transferablesToWorker[ key ] = transferable !== null ? transferable.slice( 0 ) : null;
+                    }
+                }
+
                 taskWorker.postMessage( {
                     cmd: "init",
-                    id: taskWorker.getId(),
+                    workerId: taskWorker.getId(),
                     config: config
-                }, transferables );
+                }, transferablesToWorker );
 
             } );
             this.workers.available.push( taskWorker );
@@ -553,14 +592,16 @@ class StoredExecution {
      *
      * @param {string} taskType
      * @param {object} config
+     * @param {Function} assetAvailableFunction
      * @param {Function} resolve
      * @param {Function} reject
      * @param {Transferable[]} [transferables]
      */
-    constructor( taskType, config, resolve, reject, transferables ) {
+    constructor( taskType, config, assetAvailableFunction, resolve, reject, transferables ) {
 
         this.taskType = taskType;
         this.config = config;
+        this.assetAvailableFunction = assetAvailableFunction;
         this.resolve = resolve;
         this.reject = reject;
         this.transferables = transferables;

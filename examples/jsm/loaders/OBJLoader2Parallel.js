@@ -70,15 +70,11 @@ OBJLoader2Parallel.prototype = Object.assign( Object.create( OBJLoader2.prototyp
 	setJsmWorker: function ( preferJsmWorker, jsmWorkerUrl ) {
 
 		this.preferJsmWorker = preferJsmWorker === true;
-
 		if ( jsmWorkerUrl === undefined || jsmWorkerUrl === null ) {
 
 			throw 'The url to the jsm worker is not valid. Aborting...';
-
 		}
-
 		this.jsmWorkerUrl = jsmWorkerUrl;
-
 		return this;
 
 	},
@@ -100,19 +96,18 @@ OBJLoader2Parallel.prototype = Object.assign( Object.create( OBJLoader2.prototyp
 	buildWorkerCode: function () {
 
 		const codeBuilderInstructions = new CodeBuilderInstructions( true, true, this.preferJsmWorker );
-
 		if ( codeBuilderInstructions.isSupportsJsmWorker() ) {
 
 			codeBuilderInstructions.setJsmWorkerUrl( this.jsmWorkerUrl );
 
 		}
-
 		if ( codeBuilderInstructions.isSupportsStandardWorker() ) {
 
 			const objectManipulator = new ObjectManipulator();
 			const defaultWorkerPayloadHandler = new DefaultWorkerPayloadHandler( this.parser );
 			const workerRunner = new WorkerRunner( {} );
-			codeBuilderInstructions.addCodeFragment( CodeSerializer.serializeClass( OBJLoader2Parser, this.parser ) );
+
+			codeBuilderInstructions.addCodeFragment( 'const OBJLoader2Parser = ' + OBJLoader2Parser.toString() + ';\n\n' );
 			codeBuilderInstructions.addCodeFragment( CodeSerializer.serializeClass( ObjectManipulator, objectManipulator ) );
 			codeBuilderInstructions.addCodeFragment( CodeSerializer.serializeClass( DefaultWorkerPayloadHandler, defaultWorkerPayloadHandler ) );
 			codeBuilderInstructions.addCodeFragment( CodeSerializer.serializeClass( WorkerRunner, workerRunner ) );
@@ -121,7 +116,6 @@ OBJLoader2Parallel.prototype = Object.assign( Object.create( OBJLoader2.prototyp
 			codeBuilderInstructions.addStartCode( startCode );
 
 		}
-
 		return codeBuilderInstructions;
 
 	},
@@ -168,7 +162,6 @@ OBJLoader2Parallel.prototype = Object.assign( Object.create( OBJLoader2.prototyp
 				throw 'No callback other than the default callback was provided! Aborting!';
 
 			}
-
 			// check if worker has been initialize before. If yes, skip init
 			if ( ! this.workerExecutionSupport.isWorkerLoaded( this.preferJsmWorker ) ) {
 
@@ -180,7 +173,6 @@ OBJLoader2Parallel.prototype = Object.assign( Object.create( OBJLoader2.prototyp
 					scope._onAssetAvailable( payload );
 
 				};
-
 				function scopedOnLoad( message ) {
 
 					scope.parser.callbacks.onLoad( scope.baseObject3d, message );

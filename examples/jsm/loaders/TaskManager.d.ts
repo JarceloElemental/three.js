@@ -9,10 +9,10 @@ export class TaskManager {
     setMaxParallelExecutions(maxParallelExecutions: number): TaskManager;
     getMaxParallelExecutions(): number;
     supportsTaskType(taskType: string): boolean;
-    registerTaskType(taskType: string, initFunction: Function, executeFunction: Function, comRoutingFunction: Function, fallback: boolean, dependencyUrls?: string[]): TaskManager;
+    registerTaskType(taskType: string, initFunction: Function, executeFunction: Function, comRoutingFunction: Function, fallback: boolean, dependencyDescriptions?: any[]): TaskManager;
     registerTaskTypeModule(taskType: string, workerModuleUrl: string): TaskManager;
-    initTaskType(taskType: string, config: object, transferables?: Transferable[]): Promise<void | TaskWorker[]>;
-    enqueueForExecution(taskType: string, config: object, transferables?: Transferable[]): Promise<any>;
+    initTaskType(taskType: string, config: object, transferables?: any): Promise<void | TaskWorker[]>;
+    enqueueForExecution(taskType: string, config: object, assetAvailableFunction: Function, transferables?: any): Promise<any>;
     _kickExecutions(): void;
     dispose(): TaskManager;
 }
@@ -35,7 +35,7 @@ declare class WorkerTypeDefinition {
             code: string;
         };
         dependencies: {
-            urls: URL[];
+            descriptions: any[];
             code: string[];
         };
         workerModuleUrl: URL;
@@ -47,23 +47,24 @@ declare class WorkerTypeDefinition {
     };
     getTaskType(): string;
     setFunctions(initFunction: Function, executeFunction: Function, comRoutingFunction?: Function): void;
-    setDependencyUrls(dependencyUrls: string[]): void;
+    setDependencyDescriptions(dependencyDescriptions: any[]): void;
     setWorkerModule(workerModuleUrl: string): void;
     isWorkerModule(): boolean;
     loadDependencies(): Promise<ArrayBuffer[]>;
     generateWorkerCode(dependencies: ArrayBuffer[]): Promise<string[]>;
     createWorkers(code: string): Promise<TaskWorker[]>;
     createWorkerModules(): Promise<TaskWorker[]>;
-    initWorkers(instances: TaskWorker[] | MockedTaskWorker[], config: object, transferables: Transferable[]): Promise<TaskWorker[]>;
+    initWorkers(instances: TaskWorker[] | MockedTaskWorker[], config: object, transferables: any): Promise<TaskWorker[]>;
     getAvailableTask(): TaskWorker | MockedTaskWorker | undefined;
     hasTask(): boolean;
     returnAvailableTask(taskWorker: TaskWorker | MockedTaskWorker): void;
     dispose(): void;
 }
 declare class StoredExecution {
-    constructor(taskType: string, config: object, resolve: Function, reject: Function, transferables?: Transferable[]);
+    constructor(taskType: string, config: object, assetAvailableFunction: Function, resolve: Function, reject: Function, transferables?: Transferable[]);
     taskType: string;
     config: any;
+    assetAvailableFunction: Function;
     resolve: Function;
     reject: Function;
     transferables: Transferable[];
@@ -82,5 +83,6 @@ declare class MockedTaskWorker {
     };
     getId(): number;
     postMessage(message: string, transfer?: Transferable[]): void;
+    terminate(): void;
 }
 export {};
