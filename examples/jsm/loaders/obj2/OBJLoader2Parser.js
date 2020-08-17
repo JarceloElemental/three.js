@@ -1,4 +1,5 @@
 /**
+ * @author Kai Salmen / https://kaisalmen.de
  * Development repository: https://github.com/kaisalmen/WWOBJLoader
  */
 
@@ -6,11 +7,6 @@
  * Parse OBJ data either from ArrayBuffer or string
  */
 const OBJLoader2Parser = function () {
-
-	this.logging = {
-		enabled: false,
-		debug: false
-	};
 
 	const scope = this;
 	this.callbacks = {
@@ -60,54 +56,65 @@ const OBJLoader2Parser = function () {
 
 		}
 	};
-	this.contentRef = null;
-	this.legacyMode = false;
 
-	this.materials = {};
-	this.materialPerSmoothingGroup = false;
-	this.useOAsMesh = false;
-	this.useIndices = false;
-	this.disregardNormals = false;
+	this._init = function () {
 
-	this.vertices = [];
-	this.colors = [];
-	this.normals = [];
-	this.uvs = [];
-	this.objectId = 0;
+		this.logging = {
+			enabled: false,
+			debug: false
+		};
 
-	this.rawMesh = {
-		objectName: '',
-		groupName: '',
-		activeMtlName: '',
-		mtllibName: '',
+		this.contentRef = null;
+		this.legacyMode = false;
 
-		// reset with new mesh
-		faceType: - 1,
-		subGroups: [],
-		subGroupInUse: null,
-		smoothingGroup: {
-			splitMaterials: false,
-			normalized: - 1,
-			real: - 1
-		},
-		counts: {
+		this.materials = {};
+		this.materialPerSmoothingGroup = false;
+		this.useOAsMesh = false;
+		this.useIndices = false;
+		this.disregardNormals = false;
+
+		this.vertices = [];
+		this.colors = [];
+		this.normals = [];
+		this.uvs = [];
+		this.objectId = 0;
+
+		this.rawMesh = {
+			objectName: '',
+			groupName: '',
+			activeMtlName: '',
+			mtllibName: '',
+
+			// reset with new mesh
+			faceType: - 1,
+			subGroups: [],
+			subGroupInUse: null,
+			smoothingGroup: {
+				splitMaterials: false,
+				normalized: - 1,
+				real: - 1
+			},
+			counts: {
+				doubleIndicesCount: 0,
+				faceCount: 0,
+				mtlCount: 0,
+				smoothingGroupCount: 0
+			}
+		};
+
+		this.inputObjectCount = 1;
+		this.outputObjectCount = 1;
+		this.globalCounts = {
+			vertices: 0,
+			faces: 0,
 			doubleIndicesCount: 0,
-			faceCount: 0,
-			mtlCount: 0,
-			smoothingGroupCount: 0
-		}
-	};
+			lineByte: 0,
+			currentByte: 0,
+			totalBytes: 0
+		};
 
-	this.inputObjectCount = 1;
-	this.outputObjectCount = 1;
-	this.globalCounts = {
-		vertices: 0,
-		faces: 0,
-		doubleIndicesCount: 0,
-		lineByte: 0,
-		currentByte: 0,
-		totalBytes: 0
-	};
+	}
+	this._init();
 
 	this._resetRawMesh = function () {
 
@@ -842,12 +849,6 @@ const OBJLoader2Parser = function () {
 			this._resetRawMesh();
 
 		}
-		this.callbacks.onAssetAvailable(
-			{
-				cmd: 'execComplete',
-				type: 'void'
-			} );
-
 		return haveMesh;
 
 	}
@@ -940,6 +941,7 @@ const OBJLoader2Parser = function () {
 				const payload = {
 					cmd: 'assetAvailable',
 					type: 'material',
+					id: this.objectId,
 					materials: {
 						materialCloneInstructions: materialCloneInstructions
 					}
@@ -1070,11 +1072,11 @@ const OBJLoader2Parser = function () {
 					uvs: uvFA
 				}
 			},
-			[ vertexFA.buffer ],
-			indexUA !== null ? [ indexUA.buffer ] : null,
-			colorFA !== null ? [ colorFA.buffer ] : null,
-			normalFA !== null ? [ normalFA.buffer ] : null,
-			uvFA !== null ? [ uvFA.buffer ] : null
+			[ vertexFA.buffer,
+			indexUA !== null ? indexUA.buffer : null,
+			colorFA !== null ? colorFA.buffer : null,
+			normalFA !== null ? normalFA.buffer : null,
+			uvFA !== null ? uvFA.buffer : null ]
 		);
 
 	}
@@ -1091,6 +1093,12 @@ const OBJLoader2Parser = function () {
 			console.info( parserFinalReport );
 
 		}
+		this.callbacks.onAssetAvailable(
+		{
+			cmd: 'execComplete',
+			type: 'void',
+			id: this.objectId
+		} );
 
 	}
 };

@@ -24,12 +24,11 @@ const OBJLoader2Parallel = function ( manager ) {
 
 	OBJLoader2.call( this, manager );
 	this.preferJsmWorker = false;
-	this.initPerformed = false;
 	this.jsmWorkerUrl = null;
 
 	this.executeParallel = true;
 
-	this.taskManager = new TaskManager();
+	this.taskManager = null;
 	this.taskName = 'tmOBJLoader2';
 };
 
@@ -102,6 +101,12 @@ OBJLoader2Parallel.prototype = Object.assign( Object.create( OBJLoader2.prototyp
 	 */
 	_buildWorkerCode: async function () {
 
+		if ( ! this.taskManager instanceof TaskManager ) {
+
+			if ( this.parser.logging.debug ) console.log( 'Needed to create new TaskManager' );
+			this.taskManager = new TaskManager();
+
+		}
 		if ( ! this.taskManager.supportsTaskType( this.taskName ) ) {
 
 			if ( this.preferJsmWorker ) {
@@ -111,19 +116,13 @@ OBJLoader2Parallel.prototype = Object.assign( Object.create( OBJLoader2.prototyp
 			} else {
 
 				let obj2ParserDep = 'const OBJLoader2Parser = ' + OBJLoader2Parser.toString() + ';\n\n';
-				this.taskManager.registerTaskType( this.taskName, OBJ2LoaderWorker.init, OBJ2LoaderWorker.execute, null, false, [{ code: obj2ParserDep }] );
+				this.taskManager.registerTaskType( this.taskName, OBJ2LoaderWorker.init, OBJ2LoaderWorker.execute, null, false,
+					[{ code: obj2ParserDep }] );
 
 			}
-			await this.taskManager.initTaskType( this.taskName, {} ).catch( e => console.error( e ) );
+			await this.taskManager.initTaskType( this.taskName, {} );
 
 		}
-		else {
-
-			await new Promise( resolve => resolve( true ) );
-
-		}
-		this.initPerformed = true;
-		return this.initPerformed;
 
 	},
 
@@ -150,7 +149,6 @@ OBJLoader2Parallel.prototype = Object.assign( Object.create( OBJLoader2.prototyp
 			}
 
 		}
-
 		OBJLoader2.prototype.load.call( this, content, interceptOnLoad, onFileLoadProgress, onError, onMeshAlter );
 
 	},
@@ -164,21 +162,14 @@ OBJLoader2Parallel.prototype = Object.assign( Object.create( OBJLoader2.prototyp
 
 		if ( this.executeParallel ) {
 
-			// check if worker has been initialize before. If yes, skip init
-			if ( ! this.initPerformed ) {
-
-				this._buildWorkerCode()
-					.then( x => {
+			this._buildWorkerCode()
+				.then(
+					x => {
 						if ( this.parser.logging.debug ) console.log( 'OBJLoader2Parallel init was performed: ' + x );
-						this._executeWorkerParse( content )
-					} );
+						this._executeWorkerParse( content );
+					}
+				).catch( e => console.error( e ) );
 
-			}
-			else {
-
-				this._executeWorkerParse( content );
-
-			}
 			let dummy = new Object3D();
 			dummy.name = 'OBJLoader2ParallelDummy';
 			return dummy;
@@ -197,23 +188,22 @@ OBJLoader2Parallel.prototype = Object.assign( Object.create( OBJLoader2.prototyp
 		this.materialHandler.createDefaultMaterials( false );
 
 		let config = {
-			id: 42,
+			id: Math.floor( Math.random() * Math.floor( 65536 ) ),
+			buffer: content,
 			params: {
 				modelName: this.modelName,
-				instanceNo: this.instanceNo,
 				useIndices: this.parser.useIndices,
 				disregardNormals: this.parser.disregardNormals,
 				materialPerSmoothingGroup: this.parser.materialPerSmoothingGroup,
 				useOAsMesh: this.parser.useOAsMesh,
 				materials: this.materialHandler.getMaterialsJSON()
 			},
-			buffer: content,
 			logging: {
 				enabled: this.parser.logging.enabled,
 				debug: this.parser.logging.debug
 			}
 		};
-		this.taskManager.enqueueForExecution( this.taskName, config,data => this._onAssetAvailable( data ), { buffer: content.buffer } )
+		this.taskManager.enqueueForExecution( this.taskName, config, data => this._onAssetAvailable( data ), { buffer: content } )
 			.then( data => {
 				this._onAssetAvailable( data );
 				this.parser.callbacks.onLoad( this.baseObject3d, 'finished' );
@@ -222,8 +212,6 @@ OBJLoader2Parallel.prototype = Object.assign( Object.create( OBJLoader2.prototyp
 			.catch( e => console.error( e ) )
 
 	}
-
-
 
 } );
 
