@@ -6,63 +6,68 @@
 /**
  * Parse OBJ data either from ArrayBuffer or string
  */
-const OBJLoader2Parser = function () {
+class OBJLoader2Parser {
 
-	const scope = this;
-	this.callbacks = {
-
-		/**
-		 * Announce parse progress feedback which is logged to the console.
-		 * @private
-		 *
-		 * @param {string} text Textual description of the event
-		 */
-		onProgress: function ( text ) {
-
-			const message = text ? text : '';
-			if ( scope.logging.enabled && scope.logging.debug ) {
-
-				console.log( message );
-
-			}
-
-		},
-
-		/**
-		 * Announce error feedback which is logged as error message.
-		 * @private
-		 *
-		 * @param {String} errorMessage The event containing the error
-		 */
-		onError: function ( errorMessage ) {
-
-			if ( scope.logging.enabled && scope.logging.debug ) {
-
-				console.error( errorMessage );
-
-			}
-
-		},
-		onAssetAvailable: function ( payload ) {
-
-			const errorMessage = 'OBJLoader2Parser does not provide implementation for onAssetAvailable. Aborting...';
-			scope.callbacks.onError( errorMessage );
-			throw errorMessage;
-
-		},
-		onLoad: function ( object3d, message ) {
-
-			console.log( 'You reached parser default onLoad callback: ' + message );
-
-		}
-	};
-
-	this._init = function () {
+	constructor() {
 
 		this.logging = {
 			enabled: false,
 			debug: false
 		};
+		this.usedBefore = false;
+		this._init();
+
+		const scope = this;
+		this.callbacks = {
+
+			/**
+			 * Announce parse progress feedback which is logged to the console.
+			 * @private
+			 *
+			 * @param {string} text Textual description of the event
+			 */
+			onProgress: function ( text ) {
+
+				const message = text ? text : '';
+				if ( scope.logging.enabled && scope.logging.debug ) {
+
+					console.log( message );
+
+				}
+
+			},
+
+			/**
+			 * Announce error feedback which is logged as error message.
+			 * @private
+			 *
+			 * @param {String} errorMessage The event containing the error
+			 */
+			onError: function ( errorMessage ) {
+
+				if ( scope.logging.enabled && scope.logging.debug ) {
+
+					console.error( errorMessage );
+
+				}
+
+			},
+			onAssetAvailable: function ( payload ) {
+
+				const errorMessage = 'OBJLoader2Parser does not provide implementation for onAssetAvailable. Aborting...';
+				scope.callbacks.onError( errorMessage );
+				throw errorMessage;
+
+			},
+			onLoad: function ( object3d, message ) {
+
+				console.log( 'You reached parser default onLoad callback: ' + message );
+
+			}
+		};
+	}
+
+	_init () {
 
 		this.contentRef = null;
 		this.legacyMode = false;
@@ -114,9 +119,8 @@ const OBJLoader2Parser = function () {
 		};
 
 	}
-	this._init();
 
-	this._resetRawMesh = function () {
+	_resetRawMesh () {
 
 		// faces are stored according combined index of group, material and smoothingGroup (0 or not)
 		this.rawMesh.subGroups = [];
@@ -140,7 +144,7 @@ const OBJLoader2Parser = function () {
 	 * @param {boolean} materialPerSmoothingGroup=false
 	 * @return {OBJLoader2Parser}
 	 */
-	this.setMaterialPerSmoothingGroup = function ( materialPerSmoothingGroup ) {
+	setMaterialPerSmoothingGroup ( materialPerSmoothingGroup ) {
 
 		this.materialPerSmoothingGroup = materialPerSmoothingGroup === true;
 		return this;
@@ -153,7 +157,7 @@ const OBJLoader2Parser = function () {
 	 * @param {boolean} useOAsMesh=false
 	 * @return {OBJLoader2Parser}
 	 */
-	this.setUseOAsMesh = function ( useOAsMesh ) {
+	setUseOAsMesh ( useOAsMesh ) {
 
 		this.useOAsMesh = useOAsMesh === true;
 		return this;
@@ -166,7 +170,7 @@ const OBJLoader2Parser = function () {
 	 * @param {boolean} useIndices=false
 	 * @return {OBJLoader2Parser}
 	 */
-	this.setUseIndices = function ( useIndices ) {
+	setUseIndices ( useIndices ) {
 
 		this.useIndices = useIndices === true;
 		return this;
@@ -179,7 +183,7 @@ const OBJLoader2Parser = function () {
 	 * @param {boolean} disregardNormals=false
 	 * @return {OBJLoader2Parser}
 	 */
-	this.setDisregardNormals = function ( disregardNormals ) {
+	setDisregardNormals ( disregardNormals ) {
 
 		this.disregardNormals = disregardNormals === true;
 		return this;
@@ -191,7 +195,7 @@ const OBJLoader2Parser = function () {
 	 *
 	 * @param {Object} materials Object with named materials
 	 */
-	this.setMaterials = function ( materials ) {
+	setMaterials ( materials ) {
 
  		this.materials = Object.assign( {}, materials );
 
@@ -203,7 +207,7 @@ const OBJLoader2Parser = function () {
 	 * @param onAssetAvailable
 	 * @return {OBJLoader2Parser}
 	 */
-	this.setCallbackOnAssetAvailable = function ( onAssetAvailable ) {
+	setCallbackOnAssetAvailable ( onAssetAvailable ) {
 
 		if ( onAssetAvailable !== null && onAssetAvailable !== undefined && onAssetAvailable instanceof Function ) {
 
@@ -220,7 +224,7 @@ const OBJLoader2Parser = function () {
 	 * @param {Function} onProgress
 	 * @return {OBJLoader2Parser}
 	 */
-	this.setCallbackOnProgress = function ( onProgress ) {
+	setCallbackOnProgress ( onProgress ) {
 
 		if ( onProgress !== null && onProgress !== undefined && onProgress instanceof Function ) {
 
@@ -237,7 +241,7 @@ const OBJLoader2Parser = function () {
 	 * @param {Function} onError
 	 * @return {OBJLoader2Parser}
 	 */
-	this.setCallbackOnError = function ( onError ) {
+	setCallbackOnError ( onError ) {
 
 		if ( onError !== null && onError !== undefined && onError instanceof Function ) {
 
@@ -254,7 +258,7 @@ const OBJLoader2Parser = function () {
 	 * @param {Function} onLoad
 	 * @return {OBJLoader2Parser}
 	 */
-	this.setCallbackOnLoad = function ( onLoad ) {
+	setCallbackOnLoad ( onLoad ) {
 
 		if ( onLoad !== null && onLoad !== undefined && onLoad instanceof Function ) {
 
@@ -273,7 +277,7 @@ const OBJLoader2Parser = function () {
 	 *
 	 * @return {OBJLoader2Parser}
 	 */
-	this.setLogging = function ( enabled, debug ) {
+	setLogging ( enabled, debug ) {
 
 		this.logging.enabled = enabled === true;
 		this.logging.debug = debug === true;
@@ -281,8 +285,20 @@ const OBJLoader2Parser = function () {
 
 	}
 
-	this._configure = function () {
+	/**
+	 * Tell if loader was used before.
+	 *
+	 * @return {boolean} True or false.
+	 */
+	isUsedBefore () {
 
+		return this.usedBefore;
+
+	}
+
+	_configure () {
+
+		this.usedBefore = true;
 		this._pushSmoothingGroup( 1 );
 		if ( this.logging.enabled ) {
 
@@ -308,7 +324,7 @@ const OBJLoader2Parser = function () {
 	 *
 	 * @param {Uint8Array} arrayBuffer OBJ data as Uint8Array
 	 */
-	this.execute = function ( arrayBuffer ) {
+	execute ( arrayBuffer ) {
 
 		if ( this.logging.enabled ) console.time( 'OBJLoader2Parser.execute' );
 		this._configure();
@@ -371,7 +387,7 @@ const OBJLoader2Parser = function () {
 	 *
 	 * @param {string} text OBJ data as string
 	 */
-	this.executeLegacy = function ( text ) {
+	executeLegacy ( text ) {
 
 		if ( this.logging.enabled ) console.time( 'OBJLoader2Parser.executeLegacy' );
 		this._configure();
@@ -424,7 +440,7 @@ const OBJLoader2Parser = function () {
 
 	}
 
-	this._processLine = function ( buffer, bufferPointer, slashesCount, word, currentByte ) {
+	_processLine ( buffer, bufferPointer, slashesCount, word, currentByte ) {
 
 		this.globalCounts.lineByte = this.globalCounts.currentByte;
 		this.globalCounts.currentByte = currentByte;
@@ -600,7 +616,7 @@ const OBJLoader2Parser = function () {
 
 	}
 
-	this._pushSmoothingGroup = function ( smoothingGroup ) {
+	_pushSmoothingGroup ( smoothingGroup ) {
 
 		let smoothingGroupInt = parseInt( smoothingGroup );
 		if ( isNaN( smoothingGroupInt ) ) {
@@ -632,7 +648,7 @@ const OBJLoader2Parser = function () {
 	 * faceType = 5: "l vertex ..."
 	 * faceType = 6: "p vertex ..."
 	 */
-	this._checkFaceType = function ( faceType ) {
+	_checkFaceType ( faceType ) {
 
 		if ( this.rawMesh.faceType !== faceType ) {
 
@@ -644,7 +660,7 @@ const OBJLoader2Parser = function () {
 
 	}
 
-	this._checkSubGroup = function () {
+	_checkSubGroup () {
 
 		const index = this.rawMesh.activeMtlName + '|' + this.rawMesh.smoothingGroup.normalized;
 		this.rawMesh.subGroupInUse = this.rawMesh.subGroups[ index ];
@@ -671,7 +687,7 @@ const OBJLoader2Parser = function () {
 
 	}
 
-	this._buildFace = function ( faceIndexV, faceIndexU, faceIndexN ) {
+	_buildFace ( faceIndexV, faceIndexU, faceIndexN ) {
 
 		const subGroupInUse = this.rawMesh.subGroupInUse;
 		const scope = this;
@@ -748,7 +764,7 @@ const OBJLoader2Parser = function () {
 
 	}
 
-	this._createRawMeshReport = function ( inputObjectCount ) {
+	_createRawMeshReport ( inputObjectCount ) {
 
 		return 'Input Object number: ' + inputObjectCount +
 			'\n\tObject name: ' + this.rawMesh.objectName +
@@ -766,7 +782,7 @@ const OBJLoader2Parser = function () {
 	/**
 	 * Clear any empty subGroup and calculate absolute vertex, normal and uv counts
 	 */
-	this._finalizeRawMesh = function () {
+	_finalizeRawMesh () {
 
 		const meshOutputGroupTemp = [];
 		let meshOutputGroup;
@@ -827,7 +843,7 @@ const OBJLoader2Parser = function () {
 
 	}
 
-	this._processCompletedMesh = function () {
+	_processCompletedMesh () {
 
 		const result = this._finalizeRawMesh();
 		const haveMesh = result !== null;
@@ -859,7 +875,7 @@ const OBJLoader2Parser = function () {
 	 *
 	 * @param result
 	 */
-	this._buildMesh = function ( result ) {
+	_buildMesh ( result ) {
 
 		const meshOutputGroups = result.subGroups;
 
@@ -1081,7 +1097,7 @@ const OBJLoader2Parser = function () {
 
 	}
 
-	this._finalizeParsing = function () {
+	_finalizeParsing () {
 
 		if ( this.logging.enabled ) console.info( 'Global output object count: ' + this.outputObjectCount );
 		if ( this._processCompletedMesh() && this.logging.enabled ) {
@@ -1101,6 +1117,6 @@ const OBJLoader2Parser = function () {
 		} );
 
 	}
-};
+}
 
 export { OBJLoader2Parser };

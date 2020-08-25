@@ -10,7 +10,7 @@ import { OBJLoader2 } from './OBJLoader2.js';
 // Imports only related to worker (when standard workers (modules aren't supported) are used)
 import { OBJLoader2Parser } from './obj2/OBJLoader2Parser.js';
 import { TaskManager } from '../taskmanager/TaskManager.js';
-import { OBJ2LoaderWorker } from '../taskmanager/worker/tmOBJLoader2.js';
+import { ObjectManipulator } from '../taskmanager/utils/TransferableUtils.js';
 
 
 /**
@@ -20,25 +20,25 @@ import { OBJ2LoaderWorker } from '../taskmanager/worker/tmOBJLoader2.js';
  * @param [LoadingManager] manager The loadingManager for the loader to use. Default is {@link LoadingManager}
  * @constructor
  */
-const OBJLoader2Parallel = function ( manager ) {
+class OBJLoader2Parallel extends OBJLoader2 {
 
-	OBJLoader2.call( this, manager );
-	this.preferJsmWorker = false;
-	this.jsmWorkerUrl = null;
+	static OBJLOADER2_PARALLEL_VERSION = '4.0.0-dev';
 
-	this.executeParallel = true;
+	static DEFAULT_JSM_WORKER_PATH = './jsm/taskmanager/worker/tmOBJLoader2.js';
 
-	this.taskManager = null;
-	this.taskName = 'tmOBJLoader2';
-};
+	constructor( manager ) {
+		super( manager );
 
-OBJLoader2Parallel.OBJLOADER2_PARALLEL_VERSION = '4.0.0-dev';
-console.info( 'Using OBJLoader2Parallel version: ' + OBJLoader2Parallel.OBJLOADER2_PARALLEL_VERSION );
-OBJLoader2Parallel.DEFAULT_JSM_WORKER_PATH = './jsm/taskmanager/worker/tmOBJLoader2.js';
+		this.preferJsmWorker = false;
+		this.jsmWorkerUrl = null;
 
-OBJLoader2Parallel.prototype = Object.assign( Object.create( OBJLoader2.prototype ), {
+		this.executeParallel = true;
 
-	constructor: OBJLoader2Parallel,
+		this.taskManager = null;
+		this.taskName = 'tmOBJLoader2';
+
+		console.info( 'Using OBJLoader2Parallel version: ' + OBJLoader2Parallel.OBJLOADER2_PARALLEL_VERSION );
+	}
 
 	/**
 	 * Execution of parse in parallel via Worker is default, but normal {OBJLoader2} parsing can be enforced via false here.
@@ -46,24 +46,26 @@ OBJLoader2Parallel.prototype = Object.assign( Object.create( OBJLoader2.prototyp
 	 * @param {boolean} executeParallel True or False
 	 * @return {OBJLoader2Parallel}
 	 */
-	setExecuteParallel: function ( executeParallel ) {
+	setExecuteParallel ( executeParallel ) {
 
 		this.executeParallel = executeParallel === true;
 		return this;
 
-	},
+	}
 
 	/**
+	 * @param taskManager The {@link TaskManager}
+	 * @param [taskName] A specific taskName to allow distinction between legacy and module workers
 	 *
-	 * @param [TaskManager] taskManager
-	 * @return {OBJLoader2}
+	 * @return {OBJLoader2Parallel}
 	 */
-	setTaskManager: function ( taskManager ) {
+	setTaskManager ( taskManager, taskName ) {
 
 		this.taskManager = taskManager;
+		if ( taskName ) this.taskName = taskName;
 		return this;
 
-	},
+	}
 
 	/**
 	 * Set whether jsm modules in workers should be used. This requires browser support which is currently only experimental.
@@ -71,7 +73,7 @@ OBJLoader2Parallel.prototype = Object.assign( Object.create( OBJLoader2.prototyp
 	 * @param {URL} jsmWorkerUrl Provide complete jsm worker URL otherwise relative path to this module may not be correct
 	 * @return {OBJLoader2Parallel}
 	 */
-	setJsmWorker: function ( preferJsmWorker, jsmWorkerUrl ) {
+	setJsmWorker ( preferJsmWorker, jsmWorkerUrl ) {
 
 		this.preferJsmWorker = preferJsmWorker === true;
 		if ( jsmWorkerUrl === undefined || jsmWorkerUrl === null ) {
@@ -81,7 +83,7 @@ OBJLoader2Parallel.prototype = Object.assign( Object.create( OBJLoader2.prototyp
 		this.jsmWorkerUrl = jsmWorkerUrl;
 		return this;
 
-	},
+	}
 
 	/**
 	 * Request termination of worker once parser is finished.
@@ -89,17 +91,22 @@ OBJLoader2Parallel.prototype = Object.assign( Object.create( OBJLoader2.prototyp
 	 * @param {boolean} terminateWorkerOnLoad True or false.
 	 * @return {OBJLoader2Parallel}
 	 */
-	setTerminateWorkerOnLoad: function ( terminateWorkerOnLoad ) {
+	setTerminateWorkerOnLoad ( terminateWorkerOnLoad ) {
 
 		this.terminateWorkerOnLoad = terminateWorkerOnLoad === true;
 		return this;
 
-	},
+	}
 
 	/**
 	 * Provide instructions on what is to be contained in the worker.
+	 *
+	 * @param {object} config Configuration object
+	 * @param {ArrayBuffer} [buffer] Optional buffer
+	 * @return {Promise<void>}
+	 * @private
 	 */
-	_buildWorkerCode: async function () {
+	async _buildWorkerCode ( config, buffer ) {
 
 		if ( ! this.taskManager instanceof TaskManager ) {
 
@@ -115,21 +122,32 @@ OBJLoader2Parallel.prototype = Object.assign( Object.create( OBJLoader2.prototyp
 
 			} else {
 
-				let obj2ParserDep = 'const OBJLoader2Parser = ' + OBJLoader2Parser.toString() + ';\n\n';
+				let obj2ParserDep = OBJLoader2Parser.toString() + ';\n\n';
+				let objectManipulator = ObjectManipulator.toString() + ';\n\n';
 				this.taskManager.registerTaskType( this.taskName, OBJ2LoaderWorker.init, OBJ2LoaderWorker.execute, null, false,
-					[{ code: obj2ParserDep }] );
+					[ { code: obj2ParserDep }, { code: objectManipulator } ] );
 
 			}
-			await this.taskManager.initTaskType( this.taskName, {} );
+			if ( buffer ) {
+
+				config.buffer = buffer;
+				await this.taskManager.initTaskType( this.taskName, config, { buffer: buffer } );
+
+			}
+			else {
+
+				await this.taskManager.initTaskType( this.taskName, config );
+
+			}
 
 		}
 
-	},
+	}
 
 	/**
 	 * See {@link OBJLoader2.load}
 	 */
-	load: function ( content, onLoad, onFileLoadProgress, onError, onMeshAlter ) {
+	load ( content, onLoad, onFileLoadProgress, onError, onMeshAlter ) {
 
  		const scope = this;
 		function interceptOnLoad( object3d, message ) {
@@ -151,18 +169,24 @@ OBJLoader2Parallel.prototype = Object.assign( Object.create( OBJLoader2.prototyp
 		}
 		OBJLoader2.prototype.load.call( this, content, interceptOnLoad, onFileLoadProgress, onError, onMeshAlter );
 
-	},
+	}
 
 	/**
 	 * See {@link OBJLoader2.parse}
 	 * The callback onLoad needs to be set to be able to receive the content if used in parallel mode.
 	 * Fallback is possible via {@link OBJLoader2Parallel#setExecuteParallel}.
 	 */
-	parse: function ( content ) {
+	parse ( content ) {
 
 		if ( this.executeParallel ) {
 
-			this._buildWorkerCode()
+			let config = {
+				logging: {
+					enabled: this.parser.logging.enabled,
+					debug: this.parser.logging.debug
+				},
+			}
+			this._buildWorkerCode( config )
 				.then(
 					x => {
 						if ( this.parser.logging.debug ) console.log( 'OBJLoader2Parallel init was performed: ' + x );
@@ -180,9 +204,9 @@ OBJLoader2Parallel.prototype = Object.assign( Object.create( OBJLoader2.prototyp
 
 		}
 
-	},
+	}
 
-	_executeWorkerParse: function ( content ) {
+	_executeWorkerParse ( content ) {
 
 		// Create default materials beforehand, but do not override previously set materials (e.g. during init)
 		this.materialHandler.createDefaultMaterials( false );
@@ -197,10 +221,6 @@ OBJLoader2Parallel.prototype = Object.assign( Object.create( OBJLoader2.prototyp
 				materialPerSmoothingGroup: this.parser.materialPerSmoothingGroup,
 				useOAsMesh: this.parser.useOAsMesh,
 				materials: this.materialHandler.getMaterialsJSON()
-			},
-			logging: {
-				enabled: this.parser.logging.enabled,
-				debug: this.parser.logging.debug
 			}
 		};
 		this.taskManager.enqueueForExecution( this.taskName, config, data => this._onAssetAvailable( data ), { buffer: content } )
@@ -213,6 +233,6 @@ OBJLoader2Parallel.prototype = Object.assign( Object.create( OBJLoader2.prototyp
 
 	}
 
-} );
+}
 
 export { OBJLoader2Parallel };
