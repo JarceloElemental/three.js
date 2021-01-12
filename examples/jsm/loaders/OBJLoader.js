@@ -477,10 +477,14 @@ var OBJLoader = ( function () {
 
 		},
 
+		/**
+		 *
+		 * @param {Object} materials Object with material name as keys and {@link Material} as value
+		 * @return {OBJLoader}
+		 */
 		setMaterials: function ( materials ) {
 
 			this.materials = materials;
-
 			return this;
 
 		},
@@ -778,7 +782,7 @@ var OBJLoader = ( function () {
 
 						if ( this.materials !== null ) {
 
-							material = this.materials.create( sourceMaterial.name );
+							material = this.materials[ sourceMaterial.name ];
 
 							// mtl etc. loaders probably can't create line materials correctly, copy properties to a line material.
 							if ( isLine && material && ! ( material instanceof LineBasicMaterial ) ) {

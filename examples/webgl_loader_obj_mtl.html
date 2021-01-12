@@ -74,12 +74,12 @@
 
 				new MTLLoader( manager )
 					.setPath( 'models/obj/male02/' )
-					.load( 'male02_dds.mtl', function ( materials ) {
+					.load( 'male02_dds.mtl', function ( materialCreator ) {
 
-						materials.preload();
+					materialCreator.preload();
 
 						new OBJLoader( manager )
-							.setMaterials( materials )
+							.setMaterials( materialCreator.materials )
 							.setPath( 'models/obj/male02/' )
 							.load( 'male02.obj', function ( object ) {
 
